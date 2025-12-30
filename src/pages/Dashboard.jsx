@@ -16,13 +16,11 @@ const Dashboard = () => {
                 navigate('/login'); 
             } else {
                 setUser(storedUser);
-                // Mock data logic
-                const mockCerts = [
-                    { id: 'tx_01', name: 'Bachelor of Science', issuer: 'MIT Node', date: '2024-05-12', status: 'CONFIRMED' },
-                    { id: 'tx_02', name: 'Advanced Cryptography', issuer: 'AuthNode Academy', date: '2025-01-10', status: 'CONFIRMED' },
-                    { id: 'tx_03', name: 'Full Stack Development', issuer: 'IIT Bombay', date: '2024-12-20', status: 'CONFIRMED' }
-                ];
-                setCertificates(storedUser.role === 'student' ? mockCerts : []);
+               const allStoredCerts = JSON.parse(localStorage.getItem('authnode_certificates')) || [];
+               const userCerts = allStoredCerts.filter(cert => 
+                    cert.studentEmail === storedUser.email || cert.issuerEmail === storedUser.email
+                );
+                setCertificates(userCerts);
             }
         } catch (error) {
             console.error("Dashboard Load Error:", error);
