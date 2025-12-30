@@ -4,6 +4,7 @@ import Auth from './pages/Auth';
 import Verify from './pages/Verify';
 import Issue from './pages/Issue';
 import Dashboard from './pages/Dashboard';
+import { BrowserRouter } from "react-router-dom";
 import './index.css';
 function App() {
   return (
