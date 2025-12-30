@@ -5,13 +5,6 @@ import Verify from './pages/Verify';
 import Issue from './pages/Issue';
 import Dashboard from './pages/Dashboard';
 import { HashRouter as Router, Routes, Route } from 'react-router-dom';
-    <Router> {/* BrowserRouter ki jagah HashRouter use karein */}
-      <Routes>
-        {/* Aapke routes */}
-      </Routes>
-    </Router>
-  );
-}
 import './index.css';
 function App() {
   return (
