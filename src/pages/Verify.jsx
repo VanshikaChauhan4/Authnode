@@ -23,7 +23,12 @@ const Verify = () => {
         if (urlParams.has('hash')) {
             const urlHash = urlParams.get('hash');
             setHashInput(urlHash);
-            performAudit(urlHash);
+            // Auto start audit if hash is in URL
+            setIsScanning(true);
+            setTimeout(() => {
+                setIsScanning(false);
+                performAudit(urlHash);
+            }, 1500);
         }
     }, [location]);
 
@@ -38,23 +43,34 @@ const Verify = () => {
     };
 
     const performAudit = (inputHash) => {
-        const localLedger = JSON.parse(localStorage.getItem('ledgerHistory')) || [];
-        const foundInLedger = localLedger.find(item => item.txHash === inputHash);
-        
-        let finalData = foundInLedger;
-        if (!finalData && inputHash === "0x8671B231EC532E09ACC6681BE896E8437BC8838E") {
-            finalData = { name: "Satoshi Nakamoto", course: "Blockchain Architecture", txHash: inputHash };
-        }
+        // --- FIXED KEY NAMES HERE ---
+        const localLedger = JSON.parse(localStorage.getItem('authnode_certificates')) || [];
+        // Check both old and new keys to be safe
+        const legacyLedger = JSON.parse(localStorage.getItem('ledgerHistory')) || [];
+        const combinedLedger = [...localLedger, ...legacyLedger];
 
-        if (finalData) {
+        const foundInLedger = combinedLedger.find(item => item.id === inputHash || item.txHash === inputHash);
+        
+        if (foundInLedger) {
             setResult({
-                name: finalData.name,
-                course: finalData.course,
-                hash: finalData.txHash,
+                name: foundInLedger.studentName || foundInLedger.name,
+                course: foundInLedger.courseName || foundInLedger.course,
+                hash: inputHash,
                 time: new Date().toUTCString(),
                 score: "100%",
                 success: true,
                 aiText: "✨ AI Insight: Verified Record. High integrity match found."
+            });
+        } else if (inputHash === "0x8671B231EC532E09ACC6681BE896E8437BC8838E") {
+            // Mock Satoshi Data for Demo
+            setResult({
+                name: "Satoshi Nakamoto",
+                course: "Blockchain Architecture",
+                hash: inputHash,
+                time: new Date().toUTCString(),
+                score: "100%",
+                success: true,
+                aiText: "✨ AI Insight: Genesis Block Record Verified."
             });
         } else {
             setResult({
@@ -71,7 +87,7 @@ const Verify = () => {
     };
 
     return (
-        <div className="landing-page" style={{ minHeight: '100vh' }}>
+        <div className="landing-page" style={{ minHeight: '100vh', paddingTop: '80px' }}>
             <div className="container">
                 <div className="hero-content reveal active" style={{ textAlign: 'center', marginBottom: '40px' }}>
                     <span className="hero-tag">Ledger Explorer 2.0</span>
@@ -79,57 +95,57 @@ const Verify = () => {
                     <p>Institutional Credentials on the Immutable Web</p>
                 </div>
 
-                <div className="step-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
+                <div className="step-card" style={{ maxWidth: '800px', margin: '0 auto', background: 'rgba(15, 23, 42, 0.8)', padding: '30px', borderRadius: '24px', border: '1px solid var(--border)' }}>
                     <div className="search-console">
                         <div style={{ display: 'flex', gap: '15px', flexDirection: 'column' }}>
                             <input 
                                 type="text" 
-                                className="nav-link" 
-                                style={{ background: 'rgba(255,255,255,0.05)', padding: '15px', borderRadius: '12px', border: '1px solid var(--border)', color: 'white' }}
+                                className="cyber-input" 
+                                style={{ width: '100%', padding: '15px', borderRadius: '12px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', color: 'white' }}
                                 value={hashInput}
                                 onChange={(e) => setHashInput(e.target.value)}
                                 placeholder="Enter Transaction ID or Certificate Hash..." 
                             />
-                            <button className="btn-glow" onClick={startAudit}>
-                                {isScanning ? 'Scanning Ledger...' : 'Scan Ledger'}
+                            <button className="btn-glow" onClick={startAudit} disabled={isScanning}>
+                                {isScanning ? 'SCANNING LEDGER...' : 'SCAN LEDGER'}
                             </button>
                         </div>
                     </div>
 
                     {isScanning && (
-                        <div className="qr-visual" style={{ height: '100px', position: 'relative', overflow: 'hidden', marginTop: '20px' }}>
-                            <div className="scan-line"></div>
+                        <div className="qr-visual" style={{ height: '6px', position: 'relative', overflow: 'hidden', marginTop: '20px', background: 'rgba(255,255,255,0.1)', borderRadius: '10px' }}>
+                            <div className="scan-line" style={{ height: '100%', background: 'var(--accent)', width: '40%', position: 'absolute', animation: 'scan 1.5s infinite linear' }}></div>
                         </div>
                     )}
 
                     {showDashboard && (
                         <div className="reveal active" style={{ marginTop: '40px' }}>
-                            <div className="vault-ui">
-                                <div className="cert-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px' }}>
+                            <div className="vault-ui" style={{ border: '1px solid var(--border)', borderRadius: '16px', overflow: 'hidden', background: 'rgba(0,0,0,0.3)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px', background: 'rgba(255,255,255,0.03)' }}>
                                     <div>
-                                        <p className="m-stat" style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>HOLDER</p>
-                                        <h3 style={{ color: 'white', margin: '5px 0' }}>{result.name}</h3>
+                                        <p style={{ fontSize: '0.65rem', color: 'var(--accent)', letterSpacing: '1px', marginBottom: '4px' }}>HOLDER</p>
+                                        <h3 style={{ color: 'white', margin: 0, textTransform: 'uppercase' }}>{result.name}</h3>
                                     </div>
-                                    <div className="cert-status" style={{ 
-                                        padding: '5px 15px', 
+                                    <div style={{ 
+                                        padding: '6px 16px', 
                                         borderRadius: '20px', 
-                                        fontSize: '0.8rem',
-                                        fontWeight: 'bold',
+                                        fontSize: '0.75rem',
+                                        fontWeight: '800',
                                         background: result.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', 
                                         color: result.success ? '#10b981' : '#ef4444',
                                         border: `1px solid ${result.success ? '#10b981' : '#ef4444'}`
                                     }}>
-                                        {result.success ? 'VERIFIED' : 'FAILED'}
+                                        {result.success ? 'PASSED' : 'FAILED'}
                                     </div>
                                 </div>
                                 
-                                <div style={{ marginTop: '20px', padding: '15px', borderTop: '1px solid var(--border)' }}>
-                                    <p style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>COURSE: <span style={{ color: 'white' }}>{result.course}</span></p>
-                                    <p style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>TIMESTAMP: <span style={{ color: 'white' }}>{result.time}</span></p>
-                                    <p style={{ fontSize: '0.7rem', color: 'var(--accent)', wordBreak: 'break-all', marginTop: '10px' }}>HASH: {result.hash}</p>
+                                <div style={{ padding: '20px', display: 'grid', gap: '12px' }}>
+                                    <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>COURSE: <span style={{ color: 'white' }}>{result.course}</span></p>
+                                    <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>TIMESTAMP: <span style={{ color: 'white' }}>{result.time}</span></p>
+                                    <p style={{ fontSize: '0.7rem', color: 'var(--accent)', wordBreak: 'break-all', marginTop: '8px', fontFamily: 'monospace' }}>HASH: {result.hash}</p>
                                 </div>
 
-                                <div className="benefit-pill" style={{ width: '100%', marginTop: '20px', textAlign: 'center', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', fontSize: '0.9rem' }}>
+                                <div style={{ padding: '15px', background: result.success ? 'rgba(16, 185, 129, 0.05)' : 'rgba(239, 68, 68, 0.05)', textAlign: 'center', fontSize: '0.85rem', color: result.success ? '#10b981' : '#f87171', borderTop: '1px solid var(--border)' }}>
                                     {result.aiText}
                                 </div>
                             </div>
