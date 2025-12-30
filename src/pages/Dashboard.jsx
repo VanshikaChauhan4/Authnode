@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
+import { HashRouter } from "react-router-dom";
 const Dashboard = () => {
     const navigate = useNavigate();
     const [user, setUser] = useState(null);
@@ -129,6 +129,7 @@ const Dashboard = () => {
                                 <button className="action-btn" onClick={() => window.print()}>PRINT_OFFICIAL</button>
                             </div>
                         )}
+                        <HashRouter><App /></HashRouter>
                     </div>
                 </div>
             </main>
