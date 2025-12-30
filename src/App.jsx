@@ -14,7 +14,7 @@ function App() {
         <Route path="/verify" element={<Verify />} /> 
         <Route path="/issue" element={<Issue />} />
         <Route path="/dashboard" element={<Dashboard />} />
-        <BrowserRouter basename="/authnode-app"><Routes>
+        <BrowserRouter basename="/Authnode"><Routes>
       <Route path="/" element={<Home />} />
    </Routes></BrowserRouter>
       </Routes>
