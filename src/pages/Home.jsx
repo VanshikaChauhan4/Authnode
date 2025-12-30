@@ -38,7 +38,6 @@ const Home = () => {
             </nav>
             <section className="hero-section">
                 <div className="hero-content reveal">
-                    <span className="hero-tag">V1.0 Mainnet Live</span>
                     <h1>The Global Ledger of <span className="gradient-text">Academic Truth.</span></h1>
                     <p>AuthNode eliminates credential fraud by anchoring institutional records to an immutable decentralized network. Transparent. Instant. Eternal.</p>
                     <div className="hero-btns">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { HashRouter } from "react-router-dom";
+
 const Dashboard = () => {
     const navigate = useNavigate();
     const [user, setUser] = useState(null);
@@ -8,19 +8,28 @@ const Dashboard = () => {
     const [selectedCert, setSelectedCert] = useState(null); 
 
     useEffect(() => {
-        const storedUser = JSON.parse(localStorage.getItem('authnode_current'));
-        if (!storedUser) {
-            navigate('/auth'); 
-        } else {
-            setUser(storedUser);
-            const mockCerts = [
-                { id: 'tx_01', name: 'Bachelor of Science', issuer: 'MIT Node', date: '2024-05-12', status: 'CONFIRMED' },
-                { id: 'tx_02', name: 'Advanced Cryptography', issuer: 'AuthNode Academy', date: '2025-01-10', status: 'CONFIRMED' },
-                { id: 'tx_03', name: 'Full Stack Development', issuer: 'IIT Bombay', date: '2024-12-20', status: 'CONFIRMED' }
-            ];
-            setCertificates(storedUser.role === 'student' ? mockCerts : []);
+        try {
+            const storedUser = JSON.parse(localStorage.getItem('authnode_current'));
+            
+            if (!storedUser || !storedUser.name) {
+                console.log("No user found, redirecting to login...");
+                navigate('/login'); 
+            } else {
+                setUser(storedUser);
+                // Mock data logic
+                const mockCerts = [
+                    { id: 'tx_01', name: 'Bachelor of Science', issuer: 'MIT Node', date: '2024-05-12', status: 'CONFIRMED' },
+                    { id: 'tx_02', name: 'Advanced Cryptography', issuer: 'AuthNode Academy', date: '2025-01-10', status: 'CONFIRMED' },
+                    { id: 'tx_03', name: 'Full Stack Development', issuer: 'IIT Bombay', date: '2024-12-20', status: 'CONFIRMED' }
+                ];
+                setCertificates(storedUser.role === 'student' ? mockCerts : []);
+            }
+        } catch (error) {
+            console.error("Dashboard Load Error:", error);
+            navigate('/login');
         }
     }, [navigate]);
+
     const exportIdentity = () => {
         if (!user) return;
         const identityNode = {
@@ -35,20 +44,31 @@ const Dashboard = () => {
         link.setAttribute("download", `identity_${user.name}.json`);
         link.click();
     };
-    if (!user) return null;
+
+    // Agar user null hai toh blank screen ki jagah loading dikhayein
+    if (!user) {
+        return (
+            <div style={{ background: '#0a0a0a', color: '#00ff00', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace' }}>
+                {'>'} INITIALIZING_SECURE_NODE...
+            </div>
+        );
+    }
+
     return (
         <div className="dash-container theme-dark">
             <div className="cyber-grid"></div>
             <div className="bg-glow"></div>
+            
             <nav className="dash-nav">
-                <div className="logo">AUTHNODE // <span className="role-tag">{user.role.toUpperCase()}</span></div>
+                <div className="logo">AUTHNODE // <span className="role-tag">{(user.role || 'GUEST').toUpperCase()}</span></div>
                 <div className="nav-right">
                     <button className="logout-btn" onClick={() => {
                         localStorage.removeItem('authnode_current');
-                        navigate('/auth');
+                        navigate('/login');
                     }}>TERMINATE_SESSION</button>
                 </div>
             </nav>
+
             <main className="dash-content">
                 <header className="welcome-header">
                     <div className="user-profile">
@@ -56,14 +76,15 @@ const Dashboard = () => {
                             <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user.name}`} alt="avatar" />
                         </div>
                         <div className="header-text">
-                            <h1>SYSTEM_ACCESS: {user.name.toUpperCase()}</h1>
-                            <p className="node-id">DID: auth:node:{user.email.split('@')[0]}</p>
+                            <h1>SYSTEM_ACCESS: {(user.name || 'UNKNOWN').toUpperCase()}</h1>
+                            <p className="node-id">DID: auth:node:{user.email?.split('@')[0] || 'internal'}</p>
                         </div>
                     </div>
                     <button className="export-id-btn" onClick={exportIdentity}>
                         DOWNLOAD_MANIFEST
                     </button>
                 </header>
+
                 <div className="stats-grid">
                     <div className="stat-card">
                         <div className="stat-info">
@@ -78,6 +99,7 @@ const Dashboard = () => {
                         </div>
                     </div>
                 </div>
+
                 <div className="action-area">
                     <div className="glass-panel main-panel">
                         <div className="panel-header">
@@ -103,6 +125,7 @@ const Dashboard = () => {
                             )}
                         </div>
                     </div>
+
                     <div className="glass-panel side-panel">
                         <div className="panel-header">
                             <h3>SYSTEM_LOGS</h3>
@@ -112,6 +135,7 @@ const Dashboard = () => {
                             <div className="log-item"> {'>'} Node_Encrypted_Active </div>
                             <div className="log-item"> {'>'} Session_Verified </div>
                         </div>
+
                         {selectedCert && (
                             <div className="verify-preview success-pulse">
                                 <div className="preview-header">
@@ -129,11 +153,11 @@ const Dashboard = () => {
                                 <button className="action-btn" onClick={() => window.print()}>PRINT_OFFICIAL</button>
                             </div>
                         )}
-                        <HashRouter><App /></HashRouter>
                     </div>
                 </div>
             </main>
         </div>
     );
 };
+
 export default Dashboard;
