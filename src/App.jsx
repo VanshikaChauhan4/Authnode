@@ -1,10 +1,9 @@
-import { BrowserRouter as Router, Routes, Route, HashRouter } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import Auth from './pages/Auth';
 import Verify from './pages/Verify';
 import Issue from './pages/Issue';
 import Dashboard from './pages/Dashboard';
-import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import './index.css';
 function App() {
   return (
