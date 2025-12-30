@@ -43,7 +43,6 @@ const Dashboard = () => {
             <nav className="dash-nav">
                 <div className="logo">AUTHNODE // <span className="role-tag">{user.role.toUpperCase()}</span></div>
                 <div className="nav-right">
-                    <button className="btn-outline">NETWORK_INFO</button>
                     <button className="logout-btn" onClick={() => {
                         localStorage.removeItem('authnode_current');
                         navigate('/auth');
