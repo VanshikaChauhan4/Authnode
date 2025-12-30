@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-
 const Home = () => {
     const [scrolled, setScrolled] = useState(false);
     const [qrScanned, setQrScanned] = useState(false);
