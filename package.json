@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "ethers": "^6.16.0",
-    "pinata": "^2.5.2"
-  }
-}
