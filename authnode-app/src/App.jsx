@@ -1,10 +1,12 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import React from 'react';
+import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import Auth from './pages/Auth';
 import Verify from './pages/Verify';
 import Issue from './pages/Issue';
 import Dashboard from './pages/Dashboard';
 import './index.css';
+
 function App() {
   return (
     <Router>
@@ -18,4 +20,5 @@ function App() {
     </Router>
   );
 }
+
 export default App;
