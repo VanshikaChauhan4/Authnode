@@ -29,13 +29,21 @@ app.use("/api/verify", verifyRoutes);
 app.get("/", (req, res) => {
   res.send("AuthNode Backend Running 🚀");
 });
-
-// DB
-const DB_URL = "mongodb+srv://vanshika:vanshika123@cluster0.oas1u.mongodb.net/authnode?retryWrites=true&w=majority";
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log("❌ DB Error:", err));
+// server.js ke login route mein ye daal dein
+app.post('/login', (req, res) => {
+    const { email, password } = req.body;
+    
+    // Ye line bina database ke login kar degi
+    if (email && password) {
+        return res.status(200).json({
+            success: true,
+            message: "Login Successful (Mock Mode)",
+            user: { name: "Vanshika", email: email },
+            token: "dummy-jwt-token"
+        });
+    }
+    res.status(400).json({ success: false, message: "Invalid credentials" });
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
