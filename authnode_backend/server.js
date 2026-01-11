@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 dotenv.config();
 
 const app = express();
-
+const DB_URL = "mongodb+srv://genzadmin:vanshika123@cluster0.xxxx.mongodb.net/authnode?retryWrites=true&w=majority";
 // ✅ CORS CONFIGURATION
 app.use(cors({
   origin: 'https://vanshikachauhan4.github.io/Authnode/', // Replace with your frontend URL
