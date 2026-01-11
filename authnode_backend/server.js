@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 dotenv.config();
 
 const app = express();
-const uri = "mongodb+srv://genzadmin:<vanshika123>@cluster0.qv02yxo.mongodb.net/?appName=Cluster0";// ✅ CORS CONFIGURATION
+// ✅ CORS CONFIGURATION
 app.use(cors({
   origin: 'https://vanshikachauhan4.github.io/Authnode/', // Replace with your frontend URL
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
@@ -31,6 +31,7 @@ app.get("/", (req, res) => {
 });
 
 // DB
+const DB_URL = "mongodb+srv://vanshika:vanshika123@cluster0.oas1u.mongodb.net/authnode?retryWrites=true&w=majority";
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
