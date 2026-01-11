@@ -3,6 +3,6 @@ import { verifyCertificate } from "../controllers/verifyController.js";
 
 const router = express.Router();
 
-router.get("/:hash", verifyCertificate);
+router.get("/:id", verifyCertificate);
 
 export default router;

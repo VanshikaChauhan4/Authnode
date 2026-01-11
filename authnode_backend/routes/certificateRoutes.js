@@ -1,8 +1,10 @@
 import express from "express";
-import { issueCertificate } from "../controllers/certificateController.js";
+import auth from "../middleware/authMiddleware.js";
+import { issueCertificate, myCertificates } from "../controllers/certificateController.js";
 
 const router = express.Router();
 
-router.post("/issue", issueCertificate);
+router.post("/issue", auth, issueCertificate);
+router.get("/my", auth, myCertificates);
 
 export default router;

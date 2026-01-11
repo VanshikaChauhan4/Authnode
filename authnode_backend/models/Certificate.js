@@ -1,15 +1,15 @@
 import mongoose from "mongoose";
 
-const certificateSchema = new mongoose.Schema(
+const certSchema = new mongoose.Schema(
   {
     studentName: String,
+    studentEmail: String,
     course: String,
-    institution: String,
-    issueDate: String,
-    hash: String,
-    qrCode: String
+    issueDate: Date,
+    issuedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    txHash: String
   },
   { timestamps: true }
 );
 
-export default mongoose.model("Certificate", certificateSchema);
+export default mongoose.model("Certificate", certSchema);
