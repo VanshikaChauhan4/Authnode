@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+const API_URL = import.meta.env.VITE_API_URL;
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -8,22 +10,43 @@ const Dashboard = () => {
   const [selectedCert, setSelectedCert] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  /* ===== Fetch User + Certificates ===== */
+  /* ===== Fetch User + Certificates (REAL BACKEND) ===== */
   useEffect(() => {
     const loadDashboard = async () => {
       try {
-        const userRes = await fetch("http://localhost:5000/api/auth/me");
+        const token = sessionStorage.getItem("auth_token");
+
+        if (!token) {
+          navigate("/login");
+          return;
+        }
+
+        const userRes = await fetch(`${API_URL}/api/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
         if (!userRes.ok) throw new Error("Not authenticated");
+
         const userData = await userRes.json();
         setUser(userData);
 
-        const certRes = await fetch("http://localhost:5000/api/certificates/my");
+        const certRes = await fetch(`${API_URL}/api/certificates/my`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        if (!certRes.ok) throw new Error("Failed to load certificates");
+
         const certData = await certRes.json();
         setCertificates(certData || []);
 
       } catch (err) {
         console.error(err);
-        navigate('/login');
+        sessionStorage.removeItem("auth_token");
+        navigate("/login");
       } finally {
         setLoading(false);
       }
@@ -32,24 +55,41 @@ const Dashboard = () => {
     loadDashboard();
   }, [navigate]);
 
-  /* ===== Logout ===== */
+  /* ===== Logout (REAL) ===== */
   const logout = async () => {
-    await fetch("http://localhost:5000/api/auth/logout");
-    navigate('/login');
+    try {
+      const token = sessionStorage.getItem("auth_token");
+
+      if (token) {
+        await fetch(`${API_URL}/api/auth/logout`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+      }
+    } catch (err) {
+      console.error("Logout error", err);
+    } finally {
+      sessionStorage.removeItem("auth_token");
+      navigate("/login");
+    }
   };
 
   if (loading) {
     return (
-      <div style={{
-        background: '#0a0a0a',
-        color: '#00ff00',
-        height: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontFamily: 'monospace'
-      }}>
-        {'>'} LOADING_SECURE_LEDGER...
+      <div
+        style={{
+          background: "#0a0a0a",
+          color: "#00ff00",
+          height: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "monospace"
+        }}
+      >
+        {">"} LOADING_SECURE_LEDGER...
       </div>
     );
   }
@@ -94,10 +134,14 @@ const Dashboard = () => {
 
         <div className="action-area">
           <div className="glass-panel main-panel">
-            <h3>{user.role === 'student' ? "MY_CERTIFICATES" : "ISSUED_CERTIFICATES"}</h3>
+            <h3>
+              {user.role === "student"
+                ? "MY_CERTIFICATES"
+                : "ISSUED_CERTIFICATES"}
+            </h3>
 
             {certificates.length > 0 ? (
-              certificates.map(cert => (
+              certificates.map((cert) => (
                 <div
                   key={cert._id}
                   className="cert-row"

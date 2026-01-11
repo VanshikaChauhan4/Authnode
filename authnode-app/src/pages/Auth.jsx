@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+
+const API_URL = import.meta.env.VITE_API_URL; // ✅ BACKEND URL FROM ENV
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -10,7 +12,7 @@ const Auth = () => {
   /* ===== Particle Effect (UNCHANGED) ===== */
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     let particles = [];
     let animationFrameId;
 
@@ -27,9 +29,9 @@ const Auth = () => {
         this.speedX = Math.random() * 0.5 - 0.25;
         this.speedY = Math.random() * 0.5 - 0.25;
         this.color =
-          role === 'institute'
-            ? 'rgba(112, 0, 255, 0.5)'
-            : 'rgba(0, 242, 255, 0.5)';
+          role === "institute"
+            ? "rgba(112, 0, 255, 0.5)"
+            : "rgba(0, 242, 255, 0.5)";
       }
       update() {
         this.x += this.speedX;
@@ -52,57 +54,71 @@ const Auth = () => {
 
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      particles.forEach(p => {
+      particles.forEach((p) => {
         p.update();
         p.draw();
       });
       animationFrameId = requestAnimationFrame(animate);
     };
 
-    window.addEventListener('resize', resize);
+    window.addEventListener("resize", resize);
     resize();
     init();
     animate();
 
     return () => {
       cancelAnimationFrame(animationFrameId);
-      window.removeEventListener('resize', resize);
+      window.removeEventListener("resize", resize);
     };
   }, [role]);
 
-  /* ===== Backend Auth (Mock but REAL) ===== */
+  /* ===== REAL BACKEND AUTH (PRODUCTION READY) ===== */
   const handleAuth = async () => {
+    if (!role) return;
+
     setIsProcessing(true);
 
     try {
-      const res = await fetch("http://localhost:5000/api/auth/login", {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({ role })
       });
 
-      if (!res.ok) throw new Error("Auth failed");
+      if (!res.ok) {
+        throw new Error("Authentication failed");
+      }
 
-      // no storage needed
+      const data = await res.json();
+
+      // ✅ OPTIONAL: store token if backend sends one
+      if (data.token) {
+        sessionStorage.setItem("auth_token", data.token);
+      }
+
+      // ✅ Navigation AFTER backend confirmation
       setTimeout(() => {
-        if (role === 'institute') navigate('/issue');
-        else navigate('/dashboard');
-      }, 1200);
+        if (role === "institute") navigate("/issue");
+        else navigate("/dashboard");
+      }, 800);
 
     } catch (err) {
-      alert("Authentication failed");
+      console.error(err);
+      alert("Authentication failed. Backend not reachable.");
       setIsProcessing(false);
     }
   };
 
   return (
-    <div className={`app-shell ${role ? 'active' : ''}`}>
+    <div className={`app-shell ${role ? "active" : ""}`}>
       <canvas ref={canvasRef} className="particle-canvas" />
       <div className="vignette"></div>
 
       {!role && (
         <div className="hero-split">
-          <div className="side student" onClick={() => setRole('student')}>
+          <div className="side student" onClick={() => setRole("student")}>
             <div className="side-bg"></div>
             <div className="side-content">
               <h1 className="outline-text">STUDENT</h1>
@@ -110,7 +126,7 @@ const Auth = () => {
             </div>
           </div>
 
-          <div className="side institute" onClick={() => setRole('institute')}>
+          <div className="side institute" onClick={() => setRole("institute")}>
             <div className="side-bg"></div>
             <div className="side-content">
               <h1 className="outline-text">INSTITUTION</h1>
@@ -140,14 +156,14 @@ const Auth = () => {
 
             <button
               onClick={handleAuth}
-              className={`cyber-submit ${isProcessing ? 'scanning' : ''}`}
+              className={`cyber-submit ${isProcessing ? "scanning" : ""}`}
               disabled={isProcessing}
             >
               {isProcessing ? "VERIFYING IDENTITY..." : "ENTER AUTHNODE"}
             </button>
 
-            <p style={{ fontSize: '0.7rem', color: '#555', marginTop: '20px' }}>
-              Backend verified • No client-side storage
+            <p style={{ fontSize: "0.7rem", color: "#555", marginTop: "20px" }}>
+              Backend verified • Production ready
             </p>
           </div>
         </div>
