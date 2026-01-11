@@ -2,8 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import "../index.css";
-
-const API_URL = import.meta.env.VITE_API_URL;
+const API_URL = "https://authnode-zw52.onrender.com";
 
 const Issue = () => {
   const navigate = useNavigate();

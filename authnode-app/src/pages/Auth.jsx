@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API_URL = import.meta.env.VITE_API_URL; // ✅ BACKEND URL FROM ENV
-
+ // ✅ BACKEND URL FROM ENV
+const API_URL = "https://authnode-zw52.onrender.com";
 const Auth = () => {
   const navigate = useNavigate();
   const canvasRef = useRef(null);
