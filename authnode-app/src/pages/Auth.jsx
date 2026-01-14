@@ -1,15 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-
- // ✅ BACKEND URL FROM ENV
 const API_URL = "https://authnode-zw52.onrender.com";
 const Auth = () => {
   const navigate = useNavigate();
   const canvasRef = useRef(null);
   const [role, setRole] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-
-  /* ===== Particle Effect (UNCHANGED) ===== */
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
