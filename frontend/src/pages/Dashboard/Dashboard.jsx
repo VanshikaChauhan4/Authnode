@@ -3,18 +3,21 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
 import { Share2, Award } from 'lucide-react'
-import { getSession, getCertificatesForStudent } from '../../lib/ledger'
+import { useAuth } from '../../context/AuthContext'
+import { getCertificatesForStudent } from '../../lib/ledger'
 import './Dashboard.css'
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const session = getSession()
+  const { session, loading: authLoading } = useAuth()
   const [certs, setCerts] = useState([])
   const [copiedId, setCopiedId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (authLoading) return
+
     if (!session || session.role !== 'student') {
       navigate('/auth?role=student')
       return
@@ -24,7 +27,19 @@ export default function Dashboard() {
       .then(setCerts)
       .catch((err) => setError(err.message || 'Could not load certificates'))
       .finally(() => setLoading(false))
-  }, [session, navigate])
+  }, [session, authLoading, navigate])
+
+  if (authLoading) {
+    return (
+      <div className="page">
+        <div className="container">
+          <div className="card dashboard-empty">
+            <p>Loading…</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (!session || session.role !== 'student') return null
 

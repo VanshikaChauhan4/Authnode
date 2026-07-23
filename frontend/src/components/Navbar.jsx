@@ -1,14 +1,14 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { ShieldCheck, LogOut } from 'lucide-react'
-import { getSession, logout } from '../lib/ledger'
+import { useAuth } from '../context/AuthContext'
 import './Navbar.css'
 
 export default function Navbar() {
-  const session = getSession()
+  const { session, logout } = useAuth()
   const navigate = useNavigate()
 
-  function handleLogout() {
-    logout()
+  async function handleLogout() {
+    await logout()
     navigate('/')
   }
 

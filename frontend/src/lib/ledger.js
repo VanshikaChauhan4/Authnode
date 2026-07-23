@@ -1,8 +1,8 @@
 export {
+  signup,
   login,
   logout,
-  getSession,
-  refreshSession,
+  fetchSession,
   issueCertificate,
   getCertificatesForStudent,
   verifyCertificate,

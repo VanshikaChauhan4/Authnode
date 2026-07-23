@@ -1,16 +1,7 @@
+// All requests use httpOnly cookies for session state — nothing session-related
+// is ever written to localStorage/sessionStorage on the client.
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 const CHAT_BASE = import.meta.env.VITE_CHAT_URL || '/chat-api'
-
-const SESSION_TOKEN_KEY = 'authnode_token_v1'
-
-function getToken() {
-  return localStorage.getItem(SESSION_TOKEN_KEY)
-}
-
-function setToken(token) {
-  if (token) localStorage.setItem(SESSION_TOKEN_KEY, token)
-  else localStorage.removeItem(SESSION_TOKEN_KEY)
-}
 
 async function request(path, options = {}) {
   const headers = {
@@ -18,12 +9,10 @@ async function request(path, options = {}) {
     ...(options.headers || {}),
   }
 
-  const token = getToken()
-  if (token) headers.Authorization = `Bearer ${token}`
-
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
+    credentials: 'include', // send/receive the httpOnly session cookie
   })
 
   let data = null
@@ -44,49 +33,35 @@ async function request(path, options = {}) {
   return data
 }
 
-export async function login(name, role) {
-  const session = await request('/auth/login', {
+export async function signup(name, role, password) {
+  const session = await request('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ name, role }),
+    body: JSON.stringify({ name, role, password }),
   })
-  setToken(session.token)
-  const meta = { name: session.name, role: session.role, loggedInAt: Date.now() }
-  localStorage.setItem('authnode_session_meta_v1', JSON.stringify(meta))
-  return meta
+  return { name: session.name, role: session.role }
 }
 
-export function logout() {
-  const token = getToken()
-  setToken(null)
-  localStorage.removeItem('authnode_session_meta_v1')
-  if (token) {
-    fetch(`${API_BASE}/auth/logout`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => {})
+export async function login(name, role, password) {
+  const session = await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ name, role, password }),
+  })
+  return { name: session.name, role: session.role }
+}
+
+export async function logout() {
+  try {
+    await request('/auth/logout', { method: 'POST' })
+  } catch {
+    // even if the network call fails, the caller clears local session state
   }
 }
 
-export function getSession() {
-  const token = getToken()
-  if (!token) return null
-
-  const cached = localStorage.getItem('authnode_session_meta_v1')
-  return cached ? JSON.parse(cached) : null
-}
-
-export async function refreshSession() {
-  const token = getToken()
-  if (!token) return null
-
+export async function fetchSession() {
   try {
     const session = await request('/auth/session')
-    const meta = { name: session.name, role: session.role, loggedInAt: Date.now() }
-    localStorage.setItem('authnode_session_meta_v1', JSON.stringify(meta))
-    return meta
+    return { name: session.name, role: session.role }
   } catch {
-    setToken(null)
-    localStorage.removeItem('authnode_session_meta_v1')
     return null
   }
 }
@@ -101,15 +76,7 @@ export async function issueCertificate(payload) {
     }),
   })
 
-  return {
-    id: entry.id,
-    hash: entry.hash,
-    studentName: entry.student_name,
-    course: entry.course,
-    institution: entry.institution,
-    issueDate: entry.issue_date,
-    createdAt: entry.created_at,
-  }
+  return mapCert(entry)
 }
 
 export async function getCertificatesForStudent() {

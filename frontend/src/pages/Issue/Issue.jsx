@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
 import { CheckCircle2, ShieldCheck } from 'lucide-react'
-import { getSession, issueCertificate } from '../../lib/ledger'
+import { useAuth } from '../../context/AuthContext'
+import { issueCertificate } from '../../lib/ledger'
 import './Issue.css'
 
 export default function Issue() {
   const navigate = useNavigate()
-  const session = getSession()
+  const { session, loading: authLoading } = useAuth()
 
   const [form, setForm] = useState({
     studentName: '',
@@ -20,11 +21,13 @@ export default function Issue() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (authLoading) return
     if (!session || session.role !== 'institution') {
       navigate('/auth?role=institution')
     }
-  }, [session, navigate])
+  }, [session, authLoading, navigate])
 
+  if (authLoading) return null
   if (!session || session.role !== 'institution') return null
 
   function handleChange(field, value) {

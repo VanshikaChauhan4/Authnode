@@ -29,6 +29,30 @@
   font-size: 0.9rem;
 }
 
+.mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 4px;
+  background: var(--ink-800);
+  border-radius: var(--radius-sm);
+}
+
+.mode-tab {
+  padding: 9px 6px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--paper-dim);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mode-tab-active {
+  background: var(--foil-bright);
+  color: var(--ink-900);
+}
+
 .role-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -66,4 +90,18 @@
   color: var(--invalid);
   font-size: 0.85rem;
   margin: -8px 0 14px;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 0.85rem;
+  color: var(--paper-dim);
+}
+
+.auth-switch button {
+  color: var(--foil-bright);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }

@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { Building2, GraduationCap, ScanSearch } from 'lucide-react'
-import { login } from '../../lib/ledger'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Building2, GraduationCap, ScanSearch, Lock } from 'lucide-react'
+import { useAuth } from '../../context/AuthContext'
 import './Auth.css'
 
 const ROLES = [
@@ -11,18 +11,40 @@ const ROLES = [
   { key: 'employer', label: 'Employer', icon: ScanSearch },
 ]
 
+const DESTINATIONS = {
+  institution: '/issue',
+  student: '/dashboard',
+  employer: '/verify',
+}
+
 export default function Auth() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
+  const { login, signup } = useAuth()
+
+  const [mode, setMode] = useState('signin') // 'signin' | 'signup'
   const [role, setRole] = useState(params.get('role') || 'student')
   const [name, setName] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const roleLabel = ROLES.find((r) => r.key === role).label
+
+  function validate() {
+    if (!name.trim()) return 'Enter a name to continue.'
+    if (mode === 'signup' && password.length < 8) {
+      return 'Choose a password with at least 8 characters.'
+    }
+    if (!password) return 'Enter your password.'
+    return ''
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!name.trim()) {
-      setError('Enter a name to continue.')
+    const validationError = validate()
+    if (validationError) {
+      setError(validationError)
       return
     }
 
@@ -30,16 +52,23 @@ export default function Auth() {
     setError('')
 
     try {
-      await login(name.trim(), role)
-
-      if (role === 'institution') navigate('/issue')
-      else if (role === 'student') navigate('/dashboard')
-      else navigate('/verify')
+      if (mode === 'signup') {
+        await signup(name.trim(), role, password)
+      } else {
+        await login(name.trim(), role, password)
+      }
+      navigate(DESTINATIONS[role] || '/')
     } catch (err) {
       setError(err.message || 'Could not sign in — is the backend running?')
     } finally {
       setLoading(false)
     }
+  }
+
+  function switchMode(next) {
+    setMode(next)
+    setError('')
+    setPassword('')
   }
 
   return (
@@ -52,9 +81,28 @@ export default function Auth() {
           transition={{ duration: 0.35 }}
         >
           <div className="auth-card-header">
-            <span className="eyebrow">Sign in</span>
+            <span className="eyebrow">{mode === 'signup' ? 'Create account' : 'Sign in'}</span>
             <h2>Who are you?</h2>
-            <p>Pick your role — AuthNode will guide you from here. No password needed for this demo.</p>
+            <p>Pick your role, then sign in or create an account. Every account is password-protected.</p>
+          </div>
+
+          <div className="mode-tabs">
+            <button
+              type="button"
+              className={`mode-tab ${mode === 'signin' ? 'mode-tab-active' : ''}`}
+              onClick={() => switchMode('signin')}
+              disabled={loading}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              className={`mode-tab ${mode === 'signup' ? 'mode-tab-active' : ''}`}
+              onClick={() => switchMode('signup')}
+              disabled={loading}
+            >
+              Create account
+            </button>
           </div>
 
           <div className="role-tabs">
@@ -64,6 +112,7 @@ export default function Auth() {
                 type="button"
                 className={`role-tab ${role === r.key ? 'role-tab-active' : ''}`}
                 onClick={() => setRole(r.key)}
+                disabled={loading}
               >
                 <r.icon size={18} strokeWidth={1.8} />
                 {r.label}
@@ -84,14 +133,64 @@ export default function Auth() {
                 placeholder={role === 'institution' ? 'e.g. Greenfield University' : 'e.g. Priya Sharma'}
                 autoFocus
                 disabled={loading}
+                autoComplete="username"
               />
             </div>
 
-            {error && <p className="auth-error">{error}</p>}
+            <div className="form-group">
+              <label htmlFor="password">Password</label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={mode === 'signup' ? 'At least 8 characters' : '••••••••'}
+                disabled={loading}
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              />
+            </div>
+
+            <AnimatePresence mode="wait">
+              {error && (
+                <motion.p
+                  className="auth-error"
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                >
+                  {error}
+                </motion.p>
+              )}
+            </AnimatePresence>
 
             <button type="submit" className="btn btn-primary auth-submit" disabled={loading}>
-              {loading ? 'Signing in…' : `Continue as ${ROLES.find((r) => r.key === role).label}`}
+              <Lock size={15} />
+              {loading
+                ? mode === 'signup'
+                  ? 'Creating account…'
+                  : 'Signing in…'
+                : mode === 'signup'
+                  ? `Create ${roleLabel} account`
+                  : `Sign in as ${roleLabel}`}
             </button>
+
+            <p className="auth-switch">
+              {mode === 'signup' ? (
+                <>
+                  Already have an account?{' '}
+                  <button type="button" onClick={() => switchMode('signin')}>
+                    Sign in
+                  </button>
+                </>
+              ) : (
+                <>
+                  New here?{' '}
+                  <button type="button" onClick={() => switchMode('signup')}>
+                    Create an account
+                  </button>
+                </>
+              )}
+            </p>
           </form>
         </motion.div>
       </div>
