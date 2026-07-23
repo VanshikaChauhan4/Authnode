@@ -1,0 +1,69 @@
+.auth-page {
+  display: flex;
+  align-items: center;
+  min-height: calc(100vh - 68px);
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+.auth-card {
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 40px;
+}
+
+.auth-card-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.auth-card-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  color: var(--paper);
+  margin: 10px 0 8px;
+}
+
+.auth-card-header p {
+  color: var(--paper-dim);
+  font-size: 0.9rem;
+}
+
+.role-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 26px;
+  padding: 6px;
+  background: var(--ink-800);
+  border-radius: var(--radius-sm);
+}
+
+.role-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  color: var(--paper-dim);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.role-tab-active {
+  background: var(--ink-600);
+  color: var(--foil-bright);
+}
+
+.auth-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.auth-error {
+  color: var(--invalid);
+  font-size: 0.85rem;
+  margin: -8px 0 14px;
+}

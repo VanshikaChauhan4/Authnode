@@ -1,0 +1,208 @@
+.hero {
+  padding: 88px 0 100px;
+  border-bottom: 1px solid var(--ink-600);
+}
+
+.hero-inner {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  align-items: center;
+  gap: 48px;
+}
+
+.hero-copy .eyebrow {
+  display: inline-block;
+  margin-bottom: 18px;
+}
+
+.hero-copy h1 {
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--paper);
+  margin-bottom: 20px;
+}
+
+.hero-copy p {
+  font-size: 1.08rem;
+  line-height: 1.65;
+  color: var(--paper-dim);
+  max-width: 480px;
+  margin-bottom: 20px;
+}
+
+.trust-callout {
+  max-width: 480px;
+  margin-bottom: 28px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--foil);
+  background: rgba(201, 162, 39, 0.08);
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--paper-dim);
+}
+
+.trust-callout strong {
+  color: var(--paper);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* ---- Hero seal ---- */
+.hero-seal {
+  --seal-radius: 128px;
+  position: relative;
+  width: 300px;
+  height: 300px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.seal-ring {
+  position: absolute;
+  inset: 0;
+}
+
+.seal-char {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--foil);
+  opacity: 0.55;
+  transform-origin: 0 0;
+  transform: rotate(var(--angle)) translate(0, calc(-1 * var(--seal-radius)));
+}
+
+.seal-core {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background: var(--ink-700);
+  border: 1px solid var(--foil);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--foil-bright);
+  box-shadow: 0 0 60px rgba(201, 162, 39, 0.15), inset 0 0 30px rgba(201, 162, 39, 0.08);
+}
+
+/* ---- Role grid ---- */
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.role-card {
+  text-align: left;
+  padding: 30px 26px;
+  background: var(--ink-700);
+  border: 1px solid var(--ink-500);
+  border-radius: var(--radius-md);
+  color: var(--foil);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.2s ease;
+}
+
+.role-card:hover {
+  border-color: var(--foil);
+}
+
+.role-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.role-card p {
+  color: var(--paper-dim);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+/* ---- Steps ---- */
+.steps-section {
+  border-top: 1px solid var(--ink-600);
+}
+
+.steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.step-row {
+  display: grid;
+  grid-template-columns: 44px 48px 1fr;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 26px 0;
+  border-bottom: 1px solid var(--ink-600);
+}
+
+.step-row:last-child {
+  border-bottom: none;
+}
+
+.step-n {
+  font-family: var(--font-mono);
+  color: var(--paper-dim);
+  font-size: 0.85rem;
+  padding-top: 4px;
+}
+
+.step-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background: var(--ink-700);
+  border: 1px solid var(--ink-500);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--foil);
+}
+
+.step-copy h4 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  color: var(--paper);
+  margin-bottom: 6px;
+}
+
+.step-copy p {
+  color: var(--paper-dim);
+  font-size: 0.92rem;
+  line-height: 1.6;
+  max-width: 540px;
+}
+
+@media (max-width: 900px) {
+  .hero-inner {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+  .hero-copy p { margin-left: auto; margin-right: auto; }
+  .trust-callout { margin-left: auto; margin-right: auto; }
+  .hero-actions { justify-content: center; }
+  .role-grid { grid-template-columns: 1fr; }
+  .hero-seal { width: 220px; height: 220px; --seal-radius: 92px; }
+}
