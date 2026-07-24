@@ -82,5 +82,25 @@ def verify_signature(cert_hash: str, signature_b64: str, public_key_pem: str) ->
         return False
 
 
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    return f"pbkdf2_sha256$120000${salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str | None) -> bool:
+    if not stored_hash:
+        return False
+    try:
+        algorithm, rounds, salt, digest = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(rounds))
+        return secrets.compare_digest(candidate.hex(), digest)
+    except Exception:
+        return False
+
+
 def new_token() -> str:
     return secrets.token_urlsafe(32)

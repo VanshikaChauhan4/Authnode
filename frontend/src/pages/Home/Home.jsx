@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { GraduationCap, Building2, ScanSearch, Fingerprint, UploadCloud, QrCode } from 'lucide-react'
+import { GraduationCap, Building2, ScanSearch, Fingerprint, UploadCloud, QrCode, DatabaseZap, Bot, ShieldCheck } from 'lucide-react'
 import './Home.css'
 
 const HEX = '0123456789ABCDEF'
@@ -39,6 +39,7 @@ function HeroSeal() {
       >
         <Fingerprint size={40} strokeWidth={1.5} />
       </motion.div>
+
     </div>
   )
 }
@@ -65,6 +66,13 @@ const roles = [
     desc: 'Confirm a certificate is real in one scan \u2014 no calls, no waiting.',
     action: '/verify',
   },
+]
+
+
+const proofPoints = [
+  { icon: ShieldCheck, title: 'Signed at the source', desc: 'Only institution accounts can issue records, and each certificate is signed before it is saved.' },
+  { icon: DatabaseZap, title: 'Backend persistence', desc: 'Accounts, sessions, certificates, hashes, and signatures live in the API database — no browser local storage.' },
+  { icon: Bot, title: 'RAG assistant', desc: 'The chat helper retrieves AuthNode documentation first, then uses LangChain to answer with grounded context.' },
 ]
 
 const steps = [
@@ -182,6 +190,45 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <section className="page about-section" id="about">
+        <div className="container about-grid">
+          <div className="about-copy">
+            <span className="eyebrow">About AuthNode</span>
+            <h1>Designed for real credential workflows.</h1>
+            <p>
+              AuthNode connects a polished React interface to a FastAPI backend and a
+              LangChain-powered RAG assistant. Institutions create trusted records,
+              students share QR verification links, and employers can confirm authenticity
+              without phone calls or spreadsheets.
+            </p>
+          </div>
+          <div className="proof-grid">
+            {proofPoints.map((p) => (
+              <div className="proof-card" key={p.title}>
+                <p.icon size={22} strokeWidth={1.7} />
+                <h3>{p.title}</h3>
+                <p>{p.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <footer className="site-footer">
+        <div className="container footer-inner">
+          <div>
+            <strong>AuthNode</strong>
+            <p>Credential verification with signed records and grounded AI support.</p>
+          </div>
+          <div className="footer-links">
+            <button onClick={() => navigate('/auth?role=institution')}>Issue</button>
+            <button onClick={() => navigate('/dashboard')}>Dashboard</button>
+            <button onClick={() => navigate('/verify')}>Verify</button>
+          </div>
+        </div>
+      </footer>
+
     </div>
   )
 }

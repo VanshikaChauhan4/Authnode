@@ -31,7 +31,7 @@ export default function ChatWidget() {
 
     try {
       const data = await askChatbot(text)
-      setMessages((m) => [...m, { role: 'assistant', text: data.answer }])
+      setMessages((m) => [...m, { role: 'assistant', text: data.answer, mode: data.mode, sources: data.sources || [] }])
     } catch {
       setMessages((m) => [
         ...m,
@@ -76,6 +76,12 @@ export default function ChatWidget() {
               {messages.map((m, i) => (
                 <div key={i} className={`chat-bubble chat-bubble-${m.role}`}>
                   {m.text}
+                  {m.sources?.length > 0 && (
+                    <div className="chat-sources">
+                      Sources: {m.sources.map((source) => source.source).join(', ')}
+                    </div>
+                  )}
+                  {m.mode && <div className="chat-mode">{m.mode}</div>}
                 </div>
               ))}
               {loading && <div className="chat-bubble chat-bubble-assistant chat-typing">···</div>}

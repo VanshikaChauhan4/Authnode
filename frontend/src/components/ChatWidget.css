@@ -119,3 +119,17 @@
   padding: 0 16px;
   color: var(--foil);
 }
+
+.chat-sources,
+.chat-mode {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--paper-dim);
+  opacity: 0.9;
+}
+
+.chat-mode {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}

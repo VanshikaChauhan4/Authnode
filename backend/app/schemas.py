@@ -4,10 +4,17 @@ from pydantic import BaseModel, Field
 class LoginRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     role: str = Field(pattern=r"^(institution|student|employer)$")
+    password: str = Field(min_length=1, max_length=200)
+
+
+class SignupRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    role: str = Field(pattern=r"^(institution|student|employer)$")
+    password: str = Field(min_length=8, max_length=200)
 
 
 class SessionResponse(BaseModel):
-    token: str
+    token: str | None = None
     name: str
     role: str
 
