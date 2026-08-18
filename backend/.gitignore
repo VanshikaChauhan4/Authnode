@@ -1,0 +1,6 @@
+node_modules
+.env
+db/authnode.db
+db/authnode.db-journal
+db/authnode.db-wal
+db/authnode.db-shm

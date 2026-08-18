@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+.env
+INDEX_DIR/
+faiss_index/
+chroma_db/
+node_modules/
+dist/
+.DS_Store
