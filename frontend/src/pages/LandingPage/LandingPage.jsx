@@ -1107,6 +1107,331 @@ function TrustStrip() {
 }
 
 /* ============================================================
+   FULL WIDTH PROOF LAYER COVERFLOW
+============================================================ */
+
+function ProofLayerCoverflow() {
+  const [active, setActive] = React.useState(0);
+  const [viewportWidth, setViewportWidth] = React.useState(
+    typeof window !== "undefined" ? window.innerWidth : 1440
+  );
+
+  const total = features.length;
+
+  /* Keep the carousel responsive without any automatic rotation. */
+  React.useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  /* Move only when the user clicks a card or a pagination dot. */
+  const selectCard = (index) => {
+    setActive(index);
+  };
+
+  const getOffset = (index) => {
+    let offset = index - active;
+
+    if (offset > total / 2) offset -= total;
+    if (offset < -total / 2) offset += total;
+
+    return offset;
+  };
+
+  /*
+   * The spacing is deliberately wide so the cards use the
+   * complete viewport instead of collapsing into the center.
+   */
+  const spacing =
+    viewportWidth >= 1700
+      ? 350
+      : viewportWidth >= 1450
+        ? 320
+        : viewportWidth >= 1200
+          ? 285
+          : viewportWidth >= 900
+            ? 245
+            : viewportWidth >= 640
+              ? 205
+              : 175;
+
+  return (
+    <div className="relative left-1/2 w-screen -translate-x-1/2 select-none">
+      {/* Wide ambient glow */}
+      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[620px] w-[900px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-purple-500/[0.055] blur-[150px]" />
+
+      {/* Full viewport stage */}
+      <div
+        className="relative h-[640px] w-full overflow-hidden"
+        style={{
+          perspective: "1800px",
+          perspectiveOrigin: "50% 43%",
+        }}
+      >
+        {/* Soft center rings */}
+        <div className="pointer-events-none absolute left-1/2 top-[44%] h-[440px] w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-purple-300/[0.035]" />
+
+        <div className="pointer-events-none absolute left-1/2 top-[44%] h-[660px] w-[660px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/[0.018]" />
+
+        {features.map((feature, index) => {
+          const Icon = feature.icon;
+
+          const offset = getOffset(index);
+          const distance = Math.abs(offset);
+          const isCenter = offset === 0;
+
+          const x = offset * spacing;
+
+          const z = isCenter
+            ? 150
+            : -Math.pow(distance, 1.18) * 105;
+
+          const rotateY = offset * -18;
+
+          const scale =
+            distance === 0
+              ? 1
+              : distance === 1
+                ? 0.86
+                : distance === 2
+                  ? 0.74
+                  : distance === 3
+                    ? 0.64
+                    : 0.56;
+
+          const opacity =
+            distance === 0
+              ? 1
+              : distance === 1
+                ? 0.78
+                : distance === 2
+                  ? 0.52
+                  : distance === 3
+                    ? 0.30
+                    : 0.16;
+
+          return (
+            <motion.button
+              key={feature.title}
+              type="button"
+              aria-label={`Show ${feature.title}`}
+              onClick={() => selectCard(index)}
+              className="
+                absolute
+                left-1/2
+                top-[44%]
+                h-[445px]
+                w-[330px]
+                -translate-x-1/2
+                -translate-y-1/2
+                cursor-pointer
+                text-left
+                outline-none
+              "
+              animate={{
+                x,
+                z,
+                rotateY,
+                scale,
+                opacity,
+              }}
+              transition={{
+                type: "spring",
+                stiffness: 155,
+                damping: 24,
+                mass: 0.85,
+              }}
+              style={{
+                transformStyle: "preserve-3d",
+                transformOrigin: "center center",
+                zIndex: 100 - distance,
+              }}
+            >
+              <div
+                className={`
+                  relative
+                  flex
+                  h-full
+                  w-full
+                  flex-col
+                  overflow-hidden
+                  rounded-[30px]
+                  border
+                  p-7
+                  backdrop-blur-xl
+                  ${
+                    isCenter
+                      ? "border-purple-300/30 bg-[#0b091d]/[0.98] shadow-[0_35px_110px_rgba(0,0,0,.68),0_0_80px_rgba(168,85,247,.14)]"
+                      : "border-white/[0.08] bg-[#090817]/[0.96] shadow-[0_25px_75px_rgba(0,0,0,.58)]"
+                  }
+                `}
+              >
+                {/* Card top highlight */}
+                <div
+                  className={`
+                    absolute
+                    left-0
+                    right-0
+                    top-0
+                    h-px
+                    bg-gradient-to-r
+                    from-transparent
+                    via-purple-300
+                    to-transparent
+                    ${isCenter ? "opacity-100" : "opacity-25"}
+                  `}
+                />
+
+                {/* Card glow */}
+                <div
+                  className={`
+                    pointer-events-none
+                    absolute
+                    -right-28
+                    -top-28
+                    h-64
+                    w-64
+                    rounded-full
+                    bg-purple-500/[0.09]
+                    blur-[80px]
+                    ${isCenter ? "opacity-100" : "opacity-45"}
+                  `}
+                />
+
+                {/* Header */}
+                <div className="relative flex shrink-0 items-center justify-between">
+                  <div
+                    className={`
+                      flex
+                      h-14
+                      w-14
+                      shrink-0
+                      items-center
+                      justify-center
+                      rounded-2xl
+                      border
+                      ${
+                        isCenter
+                          ? "border-purple-300/30 bg-purple-400/[0.09] shadow-[0_0_35px_rgba(168,85,247,.10)]"
+                          : "border-white/[0.08] bg-white/[0.025]"
+                      }
+                    `}
+                  >
+                    <Icon
+                      size={24}
+                      strokeWidth={1.5}
+                      className={
+                        isCenter
+                          ? "text-purple-200"
+                          : "text-purple-300/60"
+                      }
+                    />
+                  </div>
+
+                  <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-white/20">
+                    {String(index + 1).padStart(2, "0")} / 08
+                  </span>
+                </div>
+
+                {/* Content
+                    No mt-auto here. The text now flows naturally
+                    and cannot get pushed below the visible card. */}
+                <div className="relative mt-8 flex min-h-0 flex-1 flex-col">
+                  <div className="mb-4 flex shrink-0 items-center gap-2">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,.7)]" />
+
+                    <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-emerald-300/65">
+                      Proof layer
+                    </span>
+                  </div>
+
+                  <h3
+                    className={`
+                      shrink-0
+                      font-medium
+                      leading-[1.12]
+                      tracking-[-0.035em]
+                      ${
+                        isCenter
+                          ? "text-[27px] text-white"
+                          : "text-[21px] text-white/80"
+                      }
+                    `}
+                  >
+                    {feature.title}
+                  </h3>
+
+                  <p
+                    className={`
+                      mt-4
+                      max-w-full
+                      break-words
+                      leading-6
+                      ${
+                        isCenter
+                          ? "text-[13px] text-white/50"
+                          : "text-[11px] text-white/30"
+                      }
+                    `}
+                  >
+                    {feature.desc}
+                  </p>
+
+                  {/* Footer stays inside the card */}
+                  <div className="mt-auto flex shrink-0 items-center justify-between border-t border-white/[0.07] pt-4">
+                    <span className="font-mono text-[8px] uppercase tracking-[0.2em] text-white/20">
+                      AUTHNODE
+                    </span>
+
+                    <span className="font-mono text-[8px] uppercase tracking-[0.15em] text-emerald-300/40">
+                      VERIFIED
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+
+      {/* Pagination — manual only */}
+      <div className="relative z-[200] mt-[-18px] flex items-center justify-center gap-2">
+        {features.map((feature, index) => (
+          <button
+            key={feature.title}
+            type="button"
+            aria-label={`Go to ${feature.title}`}
+            onClick={() => selectCard(index)}
+            className={`
+              h-1.5
+              rounded-full
+              transition-all
+              duration-500
+              ${
+                active === index
+                  ? "w-10 bg-purple-300 shadow-[0_0_15px_rgba(216,180,254,.65)]"
+                  : "w-1.5 bg-white/20 hover:bg-white/40"
+              }
+            `}
+          />
+        ))}
+      </div>
+
+      <div className="mt-6 text-center">
+        <span className="font-mono text-[8px] uppercase tracking-[0.25em] text-white/15">
+          Click a card or dot to explore
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    MAIN LANDING PAGE
 ============================================================ */
 
@@ -1613,103 +1938,35 @@ export default function LandingPage() {
           FEATURES
       ====================================================== */}
 
-      <section className="border-b border-white/[0.07] py-28 lg:py-36">
+      <section className="relative overflow-hidden border-b border-white/[0.07] py-28 lg:py-36">
+        {/* Ambient section atmosphere */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-purple-500/[0.025] via-transparent to-cyan-500/[0.012]" />
+        <div className="pointer-events-none absolute left-1/2 top-[48%] h-[500px] w-[1000px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-purple-500/[0.035] blur-[140px]" />
 
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-
-          <div className="mx-auto mb-16 max-w-2xl text-center">
-
-            <div className="mb-5 flex items-center justify-center gap-3">
-
-              <span className="h-px w-8 bg-purple-300/60" />
-
-              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-purple-300/60">
-                Verification infrastructure
-              </span>
-
-              <span className="h-px w-8 bg-purple-300/60" />
-
-            </div>
-
-            <h2 className="text-4xl font-medium tracking-[-0.035em] sm:text-5xl">
-
-              Everything needed to
-
-              <span className="text-white/30">
-                {" "}
-                establish trust.
-              </span>
-
-            </h2>
-
-            <p className="mt-5 text-sm leading-6 text-white/30">
-              A complete credential lifecycle from issuance to
-              verification.
-            </p>
-
+        {/* Heading */}
+        <div className="relative z-20 mx-auto mb-14 max-w-3xl px-6 text-center lg:mb-16">
+          <div className="mb-6 flex items-center justify-center gap-3">
+            <span className="h-px w-10 bg-purple-300/60" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-purple-300/60">
+              Verification infrastructure
+            </span>
+            <span className="h-px w-10 bg-purple-300/60" />
           </div>
 
-          <div className="grid gap-px overflow-hidden rounded-3xl border border-white/[0.07] bg-white/[0.06] sm:grid-cols-2 lg:grid-cols-4">
+          <h2 className="text-4xl font-medium tracking-[-0.045em] sm:text-5xl lg:text-6xl">
+            Everything needed to
+            <span className="text-white/30"> establish trust.</span>
+          </h2>
 
-            {features.map((feature, index) => {
-
-              const Icon = feature.icon;
-
-              return (
-                <motion.div
-                  key={feature.title}
-                  initial={{
-                    opacity: 0,
-                    y: 20,
-                  }}
-                  whileInView={{
-                    opacity: 1,
-                    y: 0,
-                  }}
-                  viewport={{
-                    once: true,
-                  }}
-                  transition={{
-                    duration: 0.5,
-                    delay: (index % 4) * 0.06,
-                  }}
-                  className="group bg-[#070617] p-7 transition-colors hover:bg-[#07131e]"
-                >
-
-                  <div className="mb-7 flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.025] transition group-hover:border-purple-400/25 group-hover:bg-purple-400/[0.05]">
-
-                    <Icon
-                      size={20}
-                      strokeWidth={1.6}
-                      className="text-purple-300/80"
-                    />
-
-                  </div>
-
-                  <h3 className="text-sm font-medium text-white">
-                    {feature.title}
-                  </h3>
-
-                  <p className="mt-3 text-xs leading-6 text-white/30">
-                    {feature.desc}
-                  </p>
-
-                  <div className="mt-7 flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-white/15 transition group-hover:text-purple-300/50">
-
-                    Proof layer
-
-                    <ArrowUpRight size={12} />
-
-                  </div>
-
-                </motion.div>
-              );
-            })}
-
-          </div>
-
+          <p className="mx-auto mt-6 max-w-xl text-sm leading-7 text-white/30">
+            A complete credential lifecycle from issuance to verification.
+          </p>
         </div>
 
+        {/* Full-width 3D proof cards */}
+        <div className="relative z-10">
+          <ProofLayerCoverflow />
+        </div>
       </section>
 
       {/* ======================================================
