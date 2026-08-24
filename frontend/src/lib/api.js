@@ -1,110 +1,452 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-const CHAT_BASE = import.meta.env.VITE_CHAT_URL || 'http://localhost:8000'
+const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:5000/api'
 
-// The JWT itself is the one thing kept in localStorage — this is
-// standard practice (it's how the browser remembers "you're signed in"
-// across a page refresh) and holds no certificate or personal data.
-// Every other piece of app data now lives in SQLite on the backend and
-// is fetched fresh over the network; nothing else touches localStorage.
-const TOKEN_KEY = 'authnode_token'
+const CHAT_BASE =
+  import.meta.env.VITE_CHAT_URL ||
+  'http://localhost:8000'
 
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY)
-}
 
-export function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token)
-}
+// ============================================================
+// MAIN API REQUEST FUNCTION
+// ============================================================
+//
+// Authentication is handled through the httpOnly cookie
+// created by the FastAPI backend.
+//
+// No JWT is stored in localStorage.
+// No certificate data is stored in localStorage.
+//
+// credentials: 'include' allows the browser to automatically
+// send the secure session cookie with every API request.
+//
 
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY)
-}
-
-async function request(path, { method = 'GET', body, auth = false } = {}) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (auth) {
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
+async function request(
+  path,
+  {
+    method = 'GET',
+    body,
+  } = {}
+) {
+  const headers = {
+    'Content-Type': 'application/json',
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
 
-  const data = await res.json().catch(() => ({}))
+  const response = await fetch(
+    `${API_BASE}${path}`,
+    {
+      method,
 
-  if (!res.ok) {
-    throw new Error(data.error || 'Something went wrong. Please try again.')
+      headers,
+
+      credentials: 'include',
+
+      body: body
+        ? JSON.stringify(body)
+        : undefined,
+    }
+  )
+
+
+  const data = await response
+    .json()
+    .catch(() => ({}))
+
+
+  if (!response.ok) {
+    throw new Error(
+      data.detail ||
+      data.error ||
+      'Something went wrong. Please try again.'
+    )
   }
+
 
   return data
 }
+
+
+// ============================================================
+// DOWNLOAD FILE REQUEST
+// ============================================================
+//
+// Used for CSV and other binary downloads.
+// The browser automatically sends the httpOnly cookie.
+//
+
+async function downloadRequest(
+  path,
+  filename
+) {
+  const response = await fetch(
+    `${API_BASE}${path}`,
+    {
+      method: 'GET',
+
+      credentials: 'include',
+    }
+  )
+
+
+  if (!response.ok) {
+    let data = {}
+
+    try {
+      data = await response.json()
+    } catch {
+      data = {}
+    }
+
+
+    throw new Error(
+      data.detail ||
+      data.error ||
+      'Could not generate report.'
+    )
+  }
+
+
+  const blob =
+    await response.blob()
+
+
+  const url =
+    URL.createObjectURL(blob)
+
+
+  const link =
+    document.createElement('a')
+
+
+  link.href = url
+
+  link.download = filename
+
+
+  document.body.appendChild(
+    link
+  )
+
+
+  link.click()
+
+
+  link.remove()
+
+
+  URL.revokeObjectURL(
+    url
+  )
+}
+
+
+// ============================================================
+// AUTHNODE API
+// ============================================================
 
 export const api = {
-  signup: (payload) => request('/auth/signup', { method: 'POST', body: payload }),
-  login: (payload) => request('/auth/login', { method: 'POST', body: payload }),
-  me: () => request('/auth/me', { auth: true }),
 
-  issueCertificate: (payload) => request('/certificates/issue', { method: 'POST', body: payload, auth: true }),
-  myCertificates: () => request('/certificates/mine', { auth: true }),
-  verifyCertificate: (id) => request(`/certificates/verify/${encodeURIComponent(id)}`),
 
-  adminUsers: () => request('/admin/users', { auth: true }),
-  adminCertificates: (risk) => request(`/admin/certificates${risk ? `?risk=${risk}` : ''}`, { auth: true }),
-  adminStats: () => request('/admin/stats', { auth: true }),
-  adminAuditLogs: (limit = 100) => request(`/admin/audit-logs?limit=${limit}`, { auth: true }),
+  // ==========================================================
+  // AUTHENTICATION
+  // ==========================================================
 
-  // CSV download needs the auth header, so it can't be a plain <a href> —
-  // fetch as a blob and trigger the browser's save dialog manually.
-  async downloadCertificatesReport() {
-    const token = getToken()
-    const res = await fetch(`${API_BASE}/admin/reports/certificates.csv`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) throw new Error('Could not generate report.')
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'authnode-certificates-report.csv'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  },
+  signup: (payload) =>
+    request(
+      '/auth/signup',
+      {
+        method: 'POST',
+        body: payload,
+      }
+    ),
+
+
+  login: (payload) =>
+    request(
+      '/auth/login',
+      {
+        method: 'POST',
+        body: payload,
+      }
+    ),
+
+
+  logout: () =>
+    request(
+      '/auth/logout',
+      {
+        method: 'POST',
+      }
+    ),
+
+
+  // Current FastAPI session
+  session: () =>
+    request(
+      '/auth/session'
+    ),
+
+
+  // ==========================================================
+  // CERTIFICATES
+  // ==========================================================
+
+  issueCertificate: (payload) =>
+    request(
+      '/certificates/issue',
+      {
+        method: 'POST',
+
+        body: {
+
+          student_name:
+            payload.studentName,
+
+          student_email:
+            payload.studentEmail,
+
+
+          course:
+            payload.course,
+
+
+          certificate_title:
+            payload.certificateTitle ||
+            'Certificate of Completion',
+
+
+          issue_date:
+            payload.issueDate,
+
+
+          status:
+            payload.status ||
+            'ACTIVE',
+
+
+          verification_type:
+            payload.verificationType ||
+            'BLOCKCHAIN_NATIVE',
+
+        },
+      }
+    ),
+
+
+  // Get certificates belonging to the
+  // currently logged-in student.
+  studentCertificates: () =>
+    request(
+      '/certificates/student'
+    ),
+
+
+  // Get one certificate by certificate ID.
+  getCertificate: (id) =>
+    request(
+      `/certificates/${encodeURIComponent(id)}`
+    ),
+
+
+  // Cryptographically verify certificate.
+  //
+  // Backend checks:
+  //
+  // 1. Certificate exists
+  // 2. Certificate is not revoked
+  // 3. Certificate data hash matches
+  // 4. Institution public key exists
+  // 5. RSA signature is valid
+  // 6. Blockchain verification can be added later
+  //
+  verifyCertificate: (id) =>
+    request(
+      `/certificates/${encodeURIComponent(id)}/verify`
+    ),
+
+
+  // ==========================================================
+  // ADMIN
+  // ==========================================================
+  //
+  // These functions are preserved from your original api.js.
+  //
+  // IMPORTANT:
+  // Your FastAPI backend must actually contain these endpoints:
+  //
+  // /api/admin/users
+  // /api/admin/certificates
+  // /api/admin/stats
+  // /api/admin/audit-logs
+  //
+  // If those endpoints don't exist yet, these functions will
+  // remain unused until we add them to main.py.
+  //
+  // ==========================================================
+
+  adminUsers: () =>
+    request(
+      '/admin/users'
+    ),
+
+
+  adminCertificates: (
+    risk
+  ) =>
+    request(
+      `/admin/certificates${
+        risk
+          ? `?risk=${encodeURIComponent(risk)}`
+          : ''
+      }`
+    ),
+
+
+  adminStats: () =>
+    request(
+      '/admin/stats'
+    ),
+
+
+  adminAuditLogs: (
+    limit = 100
+  ) =>
+    request(
+      `/admin/audit-logs?limit=${
+        encodeURIComponent(limit)
+      }`
+    ),
+
+
+  // ==========================================================
+  // ADMIN CSV REPORT
+  // ==========================================================
+
+  downloadCertificatesReport: () =>
+    downloadRequest(
+      '/admin/reports/certificates.csv',
+      'authnode-certificates-report.csv'
+    ),
+
 }
 
+
+// ============================================================
+// CHATBOT HEALTH CHECK
+// ============================================================
+
 export async function getChatbotHealth() {
-  const res = await fetch(`${CHAT_BASE}/api/health`)
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error('Chatbot unavailable')
+  const response =
+    await fetch(
+      `${CHAT_BASE}/api/health`
+    )
+
+
+  const data =
+    await response
+      .json()
+      .catch(() => ({}))
+
+
+  if (!response.ok) {
+    throw new Error(
+      data.detail ||
+      data.error ||
+      'Chatbot unavailable'
+    )
   }
+
+
   return data
 }
 
-export async function askChatbot(message, sessionId = null) {
-  const body = { message }
-  if (sessionId) body.sessionId = sessionId
 
-  const res = await fetch(`${CHAT_BASE}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+// ============================================================
+// CHATBOT MESSAGE
+// ============================================================
 
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const detail = data.detail
-    const errMsg =
-      typeof detail === 'string'
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d) => d.msg).join(', ')
-          : 'Chatbot unavailable'
-    throw new Error(errMsg)
+export async function askChatbot(
+  message,
+  sessionId = null
+) {
+  const body = {
+    message,
   }
+
+
+  if (sessionId) {
+    body.sessionId =
+      sessionId
+  }
+
+
+  const response =
+    await fetch(
+      `${CHAT_BASE}/api/chat`,
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type':
+            'application/json',
+        },
+
+        body:
+          JSON.stringify(body),
+      }
+    )
+
+
+  const data =
+    await response
+      .json()
+      .catch(() => ({}))
+
+
+  if (!response.ok) {
+
+    const detail =
+      data.detail
+
+
+    let errorMessage
+
+
+    if (
+      typeof detail === 'string'
+    ) {
+
+      errorMessage =
+        detail
+
+    } else if (
+      Array.isArray(detail)
+    ) {
+
+      errorMessage =
+        detail
+          .map(
+            (item) =>
+              item.msg ||
+              'Invalid request'
+          )
+          .join(', ')
+
+    } else {
+
+      errorMessage =
+        data.error ||
+        'Chatbot unavailable'
+
+    }
+
+
+    throw new Error(
+      errorMessage
+    )
+  }
+
+
   return data
 }

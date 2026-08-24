@@ -9,6 +9,7 @@ import Issue from './pages/Issue/Issue'
 import Verify from './pages/Verify/Verify'
 import Dashboard from './pages/Dashboard/Dashboard'
 import Admin from './pages/Admin/Admin'
+import CertificateRecord from './pages/CertificateRecord/CertificateRecord'
 import './App.css'
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="/" element={<LandingPage />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/issue" element={<Issue />} />
+            <Route path="/certificate-record" element={<CertificateRecord />}/>
             <Route path="/verify" element={<Verify />} />
             <Route path="/verify/:id" element={<Verify />} />
             <Route path="/dashboard" element={<Dashboard />} />
