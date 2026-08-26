@@ -10,16 +10,6 @@ const CHAT_BASE =
 // ============================================================
 // MAIN API REQUEST FUNCTION
 // ============================================================
-//
-// Authentication is handled through the httpOnly cookie
-// created by the FastAPI backend.
-//
-// No JWT is stored in localStorage.
-// No certificate data is stored in localStorage.
-//
-// credentials: 'include' allows the browser to automatically
-// send the secure session cookie with every API request.
-//
 
 async function request(
   path,
@@ -32,27 +22,21 @@ async function request(
     'Content-Type': 'application/json',
   }
 
-
   const response = await fetch(
     `${API_BASE}${path}`,
     {
       method,
-
       headers,
-
       credentials: 'include',
-
       body: body
         ? JSON.stringify(body)
         : undefined,
     }
   )
 
-
   const data = await response
     .json()
     .catch(() => ({}))
-
 
   if (!response.ok) {
     throw new Error(
@@ -62,7 +46,6 @@ async function request(
     )
   }
 
-
   return data
 }
 
@@ -70,10 +53,6 @@ async function request(
 // ============================================================
 // DOWNLOAD FILE REQUEST
 // ============================================================
-//
-// Used for CSV and other binary downloads.
-// The browser automatically sends the httpOnly cookie.
-//
 
 async function downloadRequest(
   path,
@@ -83,11 +62,9 @@ async function downloadRequest(
     `${API_BASE}${path}`,
     {
       method: 'GET',
-
       credentials: 'include',
     }
   )
-
 
   if (!response.ok) {
     let data = {}
@@ -98,7 +75,6 @@ async function downloadRequest(
       data = {}
     }
 
-
     throw new Error(
       data.detail ||
       data.error ||
@@ -106,38 +82,24 @@ async function downloadRequest(
     )
   }
 
-
-  const blob =
-    await response.blob()
-
+  const blob = await response.blob()
 
   const url =
     URL.createObjectURL(blob)
 
-
   const link =
     document.createElement('a')
 
-
   link.href = url
-
   link.download = filename
 
-
-  document.body.appendChild(
-    link
-  )
-
+  document.body.appendChild(link)
 
   link.click()
 
-
   link.remove()
 
-
-  URL.revokeObjectURL(
-    url
-  )
+  URL.revokeObjectURL(url)
 }
 
 
@@ -146,7 +108,6 @@ async function downloadRequest(
 // ============================================================
 
 export const api = {
-
 
   // ==========================================================
   // AUTHENTICATION
@@ -181,7 +142,7 @@ export const api = {
     ),
 
 
-  // Current FastAPI session
+  // Get current logged-in user session
   session: () =>
     request(
       '/auth/session'
@@ -206,24 +167,19 @@ export const api = {
           student_email:
             payload.studentEmail,
 
-
           course:
             payload.course,
-
 
           certificate_title:
             payload.certificateTitle ||
             'Certificate of Completion',
 
-
           issue_date:
             payload.issueDate,
-
 
           status:
             payload.status ||
             'ACTIVE',
-
 
           verification_type:
             payload.verificationType ||
@@ -234,32 +190,44 @@ export const api = {
     ),
 
 
-  // Get certificates belonging to the
-  // currently logged-in student.
+  // ==========================================================
+  // STUDENT CERTIFICATES
+  // ==========================================================
+
   studentCertificates: () =>
     request(
       '/certificates/student'
     ),
 
 
-  // Get one certificate by certificate ID.
+  // IMPORTANT:
+  // Dashboard.jsx is currently calling:
+  //
+  // api.myCertificates()
+  //
+  // Therefore we provide this alias so the
+  // existing Dashboard does not crash.
+
+  myCertificates: () =>
+    request(
+      '/certificates/student'
+    ),
+
+
+  // ==========================================================
+  // GET SINGLE CERTIFICATE
+  // ==========================================================
+
   getCertificate: (id) =>
     request(
       `/certificates/${encodeURIComponent(id)}`
     ),
 
 
-  // Cryptographically verify certificate.
-  //
-  // Backend checks:
-  //
-  // 1. Certificate exists
-  // 2. Certificate is not revoked
-  // 3. Certificate data hash matches
-  // 4. Institution public key exists
-  // 5. RSA signature is valid
-  // 6. Blockchain verification can be added later
-  //
+  // ==========================================================
+  // VERIFY CERTIFICATE
+  // ==========================================================
+
   verifyCertificate: (id) =>
     request(
       `/certificates/${encodeURIComponent(id)}/verify`
@@ -269,21 +237,6 @@ export const api = {
   // ==========================================================
   // ADMIN
   // ==========================================================
-  //
-  // These functions are preserved from your original api.js.
-  //
-  // IMPORTANT:
-  // Your FastAPI backend must actually contain these endpoints:
-  //
-  // /api/admin/users
-  // /api/admin/certificates
-  // /api/admin/stats
-  // /api/admin/audit-logs
-  //
-  // If those endpoints don't exist yet, these functions will
-  // remain unused until we add them to main.py.
-  //
-  // ==========================================================
 
   adminUsers: () =>
     request(
@@ -291,9 +244,7 @@ export const api = {
     ),
 
 
-  adminCertificates: (
-    risk
-  ) =>
+  adminCertificates: (risk) =>
     request(
       `/admin/certificates${
         risk
@@ -313,9 +264,7 @@ export const api = {
     limit = 100
   ) =>
     request(
-      `/admin/audit-logs?limit=${
-        encodeURIComponent(limit)
-      }`
+      `/admin/audit-logs?limit=${encodeURIComponent(limit)}`
     ),
 
 
@@ -337,17 +286,14 @@ export const api = {
 // ============================================================
 
 export async function getChatbotHealth() {
-  const response =
-    await fetch(
-      `${CHAT_BASE}/api/health`
-    )
 
+  const response = await fetch(
+    `${CHAT_BASE}/api/health`
+  )
 
-  const data =
-    await response
-      .json()
-      .catch(() => ({}))
-
+  const data = await response
+    .json()
+    .catch(() => ({}))
 
   if (!response.ok) {
     throw new Error(
@@ -356,7 +302,6 @@ export async function getChatbotHealth() {
       'Chatbot unavailable'
     )
   }
-
 
   return data
 }
@@ -370,6 +315,7 @@ export async function askChatbot(
   message,
   sessionId = null
 ) {
+
   const body = {
     message,
   }
@@ -381,27 +327,25 @@ export async function askChatbot(
   }
 
 
-  const response =
-    await fetch(
-      `${CHAT_BASE}/api/chat`,
-      {
-        method: 'POST',
+  const response = await fetch(
+    `${CHAT_BASE}/api/chat`,
+    {
+      method: 'POST',
 
-        headers: {
-          'Content-Type':
-            'application/json',
-        },
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
 
-        body:
-          JSON.stringify(body),
-      }
-    )
+      body:
+        JSON.stringify(body),
+    }
+  )
 
 
-  const data =
-    await response
-      .json()
-      .catch(() => ({}))
+  const data = await response
+    .json()
+    .catch(() => ({}))
 
 
   if (!response.ok) {

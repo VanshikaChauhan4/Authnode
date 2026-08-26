@@ -9,6 +9,7 @@ import Issue from './pages/Issue/Issue'
 import Verify from './pages/Verify/Verify'
 import Dashboard from './pages/Dashboard/Dashboard'
 import Admin from './pages/Admin/Admin'
+
 import CertificateRecord from './pages/CertificateRecord/CertificateRecord'
 import './App.css'
 
