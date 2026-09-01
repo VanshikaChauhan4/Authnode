@@ -1,32 +1,46 @@
-import { createContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { api } from '../lib/api'
 
-export const AuthContext = createContext(null)
+const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    checkSession()
-  }, [])
+    let active = true
 
-  const checkSession = async () => {
-    try {
-      const data = await api.session()
+    async function restoreSession() {
+      try {
+        const data = await api.session()
 
-      setUser(data.user || data)
-    } catch (error) {
-      setUser(null)
-    } finally {
-      setLoading(false)
+        if (!active) return
+
+        setUser(data.user || data)
+      } catch (error) {
+        if (!active) return
+
+        setUser(null)
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
     }
-  }
+
+    restoreSession()
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   const login = async (payload) => {
     const data = await api.login(payload)
 
-    await checkSession()
+    const loggedInUser = data.user || data
+
+    setUser(loggedInUser)
 
     return data
   }
@@ -34,7 +48,9 @@ export function AuthProvider({ children }) {
   const signup = async (payload) => {
     const data = await api.signup(payload)
 
-    await checkSession()
+    const createdUser = data.user || data
+
+    setUser(createdUser)
 
     return data
   }
@@ -47,19 +63,47 @@ export function AuthProvider({ children }) {
     }
   }
 
+  const refreshSession = async () => {
+    try {
+      const data = await api.session()
+
+      const currentUser = data.user || data
+
+      setUser(currentUser)
+
+      return currentUser
+    } catch (error) {
+      setUser(null)
+
+      return null
+    }
+  }
+
+  const value = {
+    user,
+    setUser,
+    loading,
+    login,
+    signup,
+    logout,
+    refreshSession,
+  }
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        login,
-        signup,
-        logout,
-        checkSession,
-        setUser,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext)
+
+  if (!context) {
+    throw new Error(
+      'useAuth must be used inside AuthProvider'
+    )
+  }
+
+  return context
 }

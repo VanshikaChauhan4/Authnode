@@ -8,7 +8,7 @@ const CHAT_BASE =
 
 
 // ============================================================
-// MAIN API REQUEST FUNCTION
+// MAIN API REQUEST
 // ============================================================
 
 async function request(
@@ -18,33 +18,64 @@ async function request(
     body,
   } = {}
 ) {
-  const headers = {
-    'Content-Type': 'application/json',
+  let response
+
+  try {
+    response = await fetch(
+      `${API_BASE}${path}`,
+      {
+        method,
+
+        headers: {
+          'Content-Type': 'application/json',
+        },
+
+        // FastAPI httpOnly session cookie
+        credentials: 'include',
+
+        body:
+          body !== undefined
+            ? JSON.stringify(body)
+            : undefined,
+      }
+    )
+  } catch (error) {
+    throw new Error(
+      `Backend server is unavailable. Make sure FastAPI is running on ${API_BASE}.`
+    )
   }
 
-  const response = await fetch(
-    `${API_BASE}${path}`,
-    {
-      method,
-      headers,
-      credentials: 'include',
-      body: body
-        ? JSON.stringify(body)
-        : undefined,
-    }
-  )
 
-  const data = await response
-    .json()
-    .catch(() => ({}))
+  // Safely read response
+  const contentType =
+    response.headers.get('content-type') || ''
+
+  let data = {}
+
+  if (contentType.includes('application/json')) {
+    data = await response
+      .json()
+      .catch(() => ({}))
+  } else {
+    const text = await response
+      .text()
+      .catch(() => '')
+
+    data = text
+      ? { message: text }
+      : {}
+  }
+
 
   if (!response.ok) {
     throw new Error(
       data.detail ||
       data.error ||
-      'Something went wrong. Please try again.'
+      data.message ||
+      `Request failed with status ${response.status}`
     )
   }
+
 
   return data
 }
@@ -58,13 +89,23 @@ async function downloadRequest(
   path,
   filename
 ) {
-  const response = await fetch(
-    `${API_BASE}${path}`,
-    {
-      method: 'GET',
-      credentials: 'include',
-    }
-  )
+  let response
+
+  try {
+    response = await fetch(
+      `${API_BASE}${path}`,
+      {
+        method: 'GET',
+
+        credentials: 'include',
+      }
+    )
+  } catch {
+    throw new Error(
+      'Backend server is unavailable.'
+    )
+  }
+
 
   if (!response.ok) {
     let data = {}
@@ -78,26 +119,36 @@ async function downloadRequest(
     throw new Error(
       data.detail ||
       data.error ||
+      data.message ||
       'Could not generate report.'
     )
   }
 
-  const blob = await response.blob()
+
+  const blob =
+    await response.blob()
+
 
   const url =
     URL.createObjectURL(blob)
 
+
   const link =
     document.createElement('a')
+
 
   link.href = url
   link.download = filename
 
+
   document.body.appendChild(link)
+
 
   link.click()
 
+
   link.remove()
+
 
   URL.revokeObjectURL(url)
 }
@@ -142,7 +193,7 @@ export const api = {
     ),
 
 
-  // Get current logged-in user session
+  // Current logged-in user
   session: () =>
     request(
       '/auth/session'
@@ -150,7 +201,7 @@ export const api = {
 
 
   // ==========================================================
-  // CERTIFICATES
+  // CERTIFICATE ISSUE
   // ==========================================================
 
   issueCertificate: (payload) =>
@@ -160,7 +211,6 @@ export const api = {
         method: 'POST',
 
         body: {
-
           student_name:
             payload.studentName,
 
@@ -184,7 +234,6 @@ export const api = {
           verification_type:
             payload.verificationType ||
             'BLOCKCHAIN_NATIVE',
-
         },
       }
     ),
@@ -194,28 +243,88 @@ export const api = {
   // STUDENT CERTIFICATES
   // ==========================================================
 
-  studentCertificates: () =>
-    request(
-      '/certificates/student'
-    ),
+  /*
+   * Primary function.
+   *
+   * Backend endpoint:
+   * GET /api/certificates/student
+   */
+  studentCertificates: async () => {
+    const data =
+      await request(
+        '/certificates/student'
+      )
+
+    /*
+     * Expected backend response:
+     *
+     * {
+     *   "certificates": [...]
+     * }
+     *
+     * But this also supports:
+     *
+     * [...]
+     */
+
+    if (Array.isArray(data)) {
+      return {
+        certificates: data,
+      }
+    }
 
 
-  // IMPORTANT:
-  // Dashboard.jsx is currently calling:
-  //
-  // api.myCertificates()
-  //
-  // Therefore we provide this alias so the
-  // existing Dashboard does not crash.
+    return {
+      ...data,
 
-  myCertificates: () =>
-    request(
-      '/certificates/student'
-    ),
+      certificates:
+        Array.isArray(
+          data?.certificates
+        )
+          ? data.certificates
+          : [],
+    }
+  },
+
+
+  /*
+   * BACKWARD COMPATIBILITY
+   *
+   * Dashboard.jsx was calling:
+   *
+   * api.myCertificates()
+   *
+   * Therefore keep this function.
+   */
+  myCertificates: async () => {
+    const data =
+      await request(
+        '/certificates/student'
+      )
+
+
+    if (Array.isArray(data)) {
+      return {
+        certificates: data,
+      }
+    }
+
+
+    return {
+      ...data,
+
+      certificates:
+        Array.isArray(
+          data?.certificates
+        )
+          ? data.certificates
+          : [],
+    }
+  },
 
 
   // ==========================================================
-  // GET SINGLE CERTIFICATE
+  // SINGLE CERTIFICATE
   // ==========================================================
 
   getCertificate: (id) =>
@@ -277,7 +386,6 @@ export const api = {
       '/admin/reports/certificates.csv',
       'authnode-certificates-report.csv'
     ),
-
 }
 
 
@@ -287,21 +395,35 @@ export const api = {
 
 export async function getChatbotHealth() {
 
-  const response = await fetch(
-    `${CHAT_BASE}/api/health`
-  )
+  let response
 
-  const data = await response
-    .json()
-    .catch(() => ({}))
+  try {
+    response =
+      await fetch(
+        `${CHAT_BASE}/api/health`
+      )
+  } catch {
+    throw new Error(
+      `Chatbot service is unavailable. Make sure it is running on ${CHAT_BASE}.`
+    )
+  }
+
+
+  const data =
+    await response
+      .json()
+      .catch(() => ({}))
+
 
   if (!response.ok) {
     throw new Error(
       data.detail ||
       data.error ||
+      data.message ||
       'Chatbot unavailable'
     )
   }
+
 
   return data
 }
@@ -327,25 +449,35 @@ export async function askChatbot(
   }
 
 
-  const response = await fetch(
-    `${CHAT_BASE}/api/chat`,
-    {
-      method: 'POST',
+  let response
 
-      headers: {
-        'Content-Type':
-          'application/json',
-      },
+  try {
+    response =
+      await fetch(
+        `${CHAT_BASE}/api/chat`,
+        {
+          method: 'POST',
 
-      body:
-        JSON.stringify(body),
-    }
-  )
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+
+          body:
+            JSON.stringify(body),
+        }
+      )
+  } catch {
+    throw new Error(
+      `Chatbot service is unavailable. Make sure it is running on ${CHAT_BASE}.`
+    )
+  }
 
 
-  const data = await response
-    .json()
-    .catch(() => ({}))
+  const data =
+    await response
+      .json()
+      .catch(() => ({}))
 
 
   if (!response.ok) {
@@ -381,6 +513,7 @@ export async function askChatbot(
 
       errorMessage =
         data.error ||
+        data.message ||
         'Chatbot unavailable'
 
     }
