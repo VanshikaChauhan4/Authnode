@@ -6,6 +6,39 @@ const CHAT_BASE =
   import.meta.env.VITE_CHAT_URL ||
   'http://localhost:8000'
 
+const AUTH_TOKEN_KEY = 'authnode_token'
+
+
+// ============================================================
+// AUTH TOKEN HELPERS
+// ============================================================
+
+export function getToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setToken(token) {
+  if (!token) return
+
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, token)
+  } catch {
+    // Ignore localStorage errors
+  }
+}
+
+export function clearToken() {
+  try {
+    localStorage.removeItem(AUTH_TOKEN_KEY)
+  } catch {
+    // Ignore localStorage errors
+  }
+}
+
 
 // ============================================================
 // MAIN API REQUEST
@@ -16,8 +49,20 @@ async function request(
   {
     method = 'GET',
     body,
+    auth = true,
   } = {}
 ) {
+  const headers = {
+    'Content-Type': 'application/json',
+  }
+
+  // AuthNode backend uses JWT Bearer authentication.
+  const token = auth ? getToken() : null
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
   let response
 
   try {
@@ -25,47 +70,52 @@ async function request(
       `${API_BASE}${path}`,
       {
         method,
-
-        headers: {
-          'Content-Type': 'application/json',
-        },
-
-        // FastAPI httpOnly session cookie
-        credentials: 'include',
-
+        headers,
         body:
           body !== undefined
             ? JSON.stringify(body)
             : undefined,
       }
     )
-  } catch (error) {
+  } catch {
     throw new Error(
-      `Backend server is unavailable. Make sure FastAPI is running on ${API_BASE}.`
+      `Backend server is unavailable. Make sure AuthNode backend is running on ${API_BASE}.`
     )
   }
 
 
-  // Safely read response
+  // ==========================================================
+  // SAFELY READ RESPONSE
+  // ==========================================================
+
   const contentType =
     response.headers.get('content-type') || ''
 
   let data = {}
 
-  if (contentType.includes('application/json')) {
+  if (
+    contentType.includes(
+      'application/json'
+    )
+  ) {
     data = await response
       .json()
       .catch(() => ({}))
   } else {
-    const text = await response
-      .text()
-      .catch(() => '')
+    const text =
+      await response
+        .text()
+        .catch(() => '')
 
     data = text
       ? { message: text }
       : {}
   }
 
+
+  // ==========================================================
+  // ERROR HANDLING
+  // ==========================================================
 
   if (!response.ok) {
     throw new Error(
@@ -75,7 +125,6 @@ async function request(
       `Request failed with status ${response.status}`
     )
   }
-
 
   return data
 }
@@ -89,6 +138,15 @@ async function downloadRequest(
   path,
   filename
 ) {
+  const token = getToken()
+
+  const headers = {}
+
+  if (token) {
+    headers.Authorization =
+      `Bearer ${token}`
+  }
+
   let response
 
   try {
@@ -96,8 +154,7 @@ async function downloadRequest(
       `${API_BASE}${path}`,
       {
         method: 'GET',
-
-        credentials: 'include',
+        headers,
       }
     )
   } catch {
@@ -128,27 +185,20 @@ async function downloadRequest(
   const blob =
     await response.blob()
 
-
   const url =
     URL.createObjectURL(blob)
-
 
   const link =
     document.createElement('a')
 
-
   link.href = url
   link.download = filename
 
-
   document.body.appendChild(link)
-
 
   link.click()
 
-
   link.remove()
-
 
   URL.revokeObjectURL(url)
 }
@@ -164,39 +214,68 @@ export const api = {
   // AUTHENTICATION
   // ==========================================================
 
-  signup: (payload) =>
-    request(
-      '/auth/signup',
-      {
-        method: 'POST',
-        body: payload,
-      }
-    ),
+  signup: async (payload) => {
+    const data =
+      await request(
+        '/auth/signup',
+        {
+          method: 'POST',
+          body: payload,
+          auth: false,
+        }
+      )
+
+    // IMPORTANT:
+    // Save JWT immediately after signup.
+    if (data?.token) {
+      setToken(data.token)
+    }
+
+    return data
+  },
 
 
-  login: (payload) =>
-    request(
-      '/auth/login',
-      {
-        method: 'POST',
-        body: payload,
-      }
-    ),
+  login: async (payload) => {
+    const data =
+      await request(
+        '/auth/login',
+        {
+          method: 'POST',
+          body: payload,
+          auth: false,
+        }
+      )
+
+    // IMPORTANT:
+    // Save JWT immediately after login.
+    if (data?.token) {
+      setToken(data.token)
+    }
+
+    return data
+  },
 
 
-  logout: () =>
-    request(
-      '/auth/logout',
-      {
-        method: 'POST',
-      }
-    ),
+  logout: async () => {
+    // JWT authentication is stateless.
+    // There is no need to call a backend logout endpoint.
+    clearToken()
+
+    return {
+      ok: true,
+    }
+  },
 
 
-  // Current logged-in user
+  // ==========================================================
+  // CURRENT LOGGED-IN USER
+  // ==========================================================
+
+  // Backend endpoint:
+  // GET /api/auth/me
   session: () =>
     request(
-      '/auth/session'
+      '/auth/me'
     ),
 
 
@@ -211,29 +290,17 @@ export const api = {
         method: 'POST',
 
         body: {
-          student_name:
+          studentName:
             payload.studentName,
 
-          student_email:
+          studentEmail:
             payload.studentEmail,
 
           course:
             payload.course,
 
-          certificate_title:
-            payload.certificateTitle ||
-            'Certificate of Completion',
-
-          issue_date:
+          issueDate:
             payload.issueDate,
-
-          status:
-            payload.status ||
-            'ACTIVE',
-
-          verification_type:
-            payload.verificationType ||
-            'BLOCKCHAIN_NATIVE',
         },
       }
     ),
@@ -243,36 +310,17 @@ export const api = {
   // STUDENT CERTIFICATES
   // ==========================================================
 
-  /*
-   * Primary function.
-   *
-   * Backend endpoint:
-   * GET /api/certificates/student
-   */
   studentCertificates: async () => {
     const data =
       await request(
-        '/certificates/student'
+        '/certificates/mine'
       )
-
-    /*
-     * Expected backend response:
-     *
-     * {
-     *   "certificates": [...]
-     * }
-     *
-     * But this also supports:
-     *
-     * [...]
-     */
 
     if (Array.isArray(data)) {
       return {
         certificates: data,
       }
     }
-
 
     return {
       ...data,
@@ -287,28 +335,22 @@ export const api = {
   },
 
 
-  /*
-   * BACKWARD COMPATIBILITY
-   *
-   * Dashboard.jsx was calling:
-   *
-   * api.myCertificates()
-   *
-   * Therefore keep this function.
-   */
+  // ==========================================================
+  // BACKWARD COMPATIBILITY
+  // Dashboard may use api.myCertificates()
+  // ==========================================================
+
   myCertificates: async () => {
     const data =
       await request(
-        '/certificates/student'
+        '/certificates/mine'
       )
-
 
     if (Array.isArray(data)) {
       return {
         certificates: data,
       }
     }
-
 
     return {
       ...data,
@@ -329,7 +371,10 @@ export const api = {
 
   getCertificate: (id) =>
     request(
-      `/certificates/${encodeURIComponent(id)}`
+      `/certificates/verify/${encodeURIComponent(id)}`,
+      {
+        auth: false,
+      }
     ),
 
 
@@ -337,9 +382,15 @@ export const api = {
   // VERIFY CERTIFICATE
   // ==========================================================
 
+  // Certificate verification is PUBLIC.
+  // A person scanning a certificate QR code
+  // should NOT have to log in.
   verifyCertificate: (id) =>
     request(
-      `/certificates/${encodeURIComponent(id)}/verify`
+      `/certificates/verify/${encodeURIComponent(id)}`,
+      {
+        auth: false,
+      }
     ),
 
 
@@ -394,7 +445,6 @@ export const api = {
 // ============================================================
 
 export async function getChatbotHealth() {
-
   let response
 
   try {
@@ -437,11 +487,9 @@ export async function askChatbot(
   message,
   sessionId = null
 ) {
-
   const body = {
     message,
   }
-
 
   if (sessionId) {
     body.sessionId =
@@ -481,25 +529,20 @@ export async function askChatbot(
 
 
   if (!response.ok) {
-
     const detail =
       data.detail
 
-
     let errorMessage
 
-
     if (
-      typeof detail === 'string'
+      typeof detail ===
+      'string'
     ) {
-
       errorMessage =
         detail
-
     } else if (
       Array.isArray(detail)
     ) {
-
       errorMessage =
         detail
           .map(
@@ -508,16 +551,12 @@ export async function askChatbot(
               'Invalid request'
           )
           .join(', ')
-
     } else {
-
       errorMessage =
         data.error ||
         data.message ||
         'Chatbot unavailable'
-
     }
-
 
     throw new Error(
       errorMessage

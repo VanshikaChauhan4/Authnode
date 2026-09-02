@@ -1,7 +1,4 @@
-// CertificateRecord.jsx
-
 import React from "react";
-
 const CertificateRecord = ({
   certificate = null,
   onBack,
@@ -27,7 +24,6 @@ const CertificateRecord = ({
       verificationType
     }
   */
-
   const formatDate = (date) => {
     if (!date) return "Not available";
 

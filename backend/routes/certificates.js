@@ -7,13 +7,15 @@ import { logEvent } from '../services/auditLog.js'
 
 const router = Router()
 
+/* ============================================================
+   CRYPTO & HASH HELPERS
+============================================================ */
+
 // Canonical string that gets hashed — order matters, and this exact
-// shape must be reproducible during verification. This is the real
-// cryptographic proof step, done server-side with Node's built-in
-// crypto module (no client can influence it).
+// shape must be reproducible during verification.
 function buildCertString({ studentName, studentEmail, course, institution, issueDate }) {
   return [studentName, studentEmail, course, institution, issueDate]
-    .map((s) => s.trim().toLowerCase())
+    .map((s) => (s ? s.trim().toLowerCase() : ''))
     .join('|')
 }
 
@@ -23,6 +25,7 @@ function sha256(input) {
 
 // Attaches human-readable labels and parses the stored JSON flags array
 function withFraudDetails(row) {
+  if (!row) return null
   const flags = JSON.parse(row.fraud_flags || '[]')
   return {
     ...row,
@@ -30,6 +33,26 @@ function withFraudDetails(row) {
     fraud_flag_labels: flags.map((f) => FRAUD_FLAG_LABELS[f] || f),
   }
 }
+
+// Robust fuzzy comparison for names (tolerates case, punctuation, middle names)
+function namesMatch(nameA = '', nameB = '') {
+  const cleanA = nameA.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim()
+  const cleanB = nameB.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim()
+
+  if (!cleanA || !cleanB) return true // Don't block if one side wasn't provided
+  if (cleanA === cleanB) return true
+  if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) return true
+
+  const partsA = cleanA.split(' ').filter(Boolean)
+  const partsB = cleanB.split(' ').filter(Boolean)
+  const commonWords = partsA.filter((part) => partsB.includes(part))
+
+  return commonWords.length >= Math.min(partsA.length, partsB.length) * 0.6
+}
+
+/* ============================================================
+   ROUTES
+============================================================ */
 
 // POST /api/certificates/issue — institutions only
 router.post('/issue', requireAuth, requireRole('institution'), (req, res) => {
@@ -83,8 +106,7 @@ router.post('/issue', requireAuth, requireRole('institution'), (req, res) => {
   res.status(201).json({ certificate: withFraudDetails(entry) })
 })
 
-// GET /api/certificates/issued — institutions only, their own issuance history
-// (foundation for the Verification Dashboard / Admin Panel modules)
+// GET /api/certificates/issued — institutions only
 router.get('/issued', requireAuth, requireRole('institution'), (req, res) => {
   const rows = db
     .prepare('SELECT * FROM certificates WHERE issued_by_user_id = ? ORDER BY created_at DESC')
@@ -92,7 +114,7 @@ router.get('/issued', requireAuth, requireRole('institution'), (req, res) => {
   res.json({ certificates: rows.map(withFraudDetails) })
 })
 
-// GET /api/certificates/mine — students only, matched by their account email
+// GET /api/certificates/mine — students only
 router.get('/mine', requireAuth, requireRole('student'), (req, res) => {
   const certs = db
     .prepare('SELECT * FROM certificates WHERE student_email = ? ORDER BY created_at DESC')
@@ -100,31 +122,109 @@ router.get('/mine', requireAuth, requireRole('student'), (req, res) => {
   res.json({ certificates: certs.map(withFraudDetails) })
 })
 
-// GET /api/certificates/verify/:id — public, no auth required.
-// Anyone holding a certificate ID (e.g. from a QR code) can check it.
+/* ============================================================
+   CORE VERIFICATION ROUTE
+   GET /api/certificates/verify/:id?studentName=...
+============================================================ */
 router.get('/verify/:id', (req, res) => {
-  const entry = db.prepare('SELECT * FROM certificates WHERE id = ?').get(req.params.id)
+  try {
+    const rawId = (req.params.id || '').trim()
+    const queryStudentName = (req.query.studentName || '').trim()
 
-  if (!entry) {
-    logEvent({ eventType: 'certificate_verify_attempt', actorLabel: 'anonymous verifier', targetCertId: req.params.id, detail: 'not_found' })
-    return res.json({ status: 'not_found' })
-  }
+    if (!rawId) {
+      return res.status(400).json({ status: 'invalid', message: 'Certificate ID is required.' })
+    }
 
-  const recomputed = sha256(
-    buildCertString({
-      studentName: entry.student_name,
-      studentEmail: entry.student_email,
-      course: entry.course,
-      institution: entry.institution,
-      issueDate: entry.issue_date,
+    // 1. Case-insensitive lookup in SQLite Database
+    const entry = db
+      .prepare('SELECT * FROM certificates WHERE id = ? OR LOWER(id) = LOWER(?)')
+      .get(rawId, rawId)
+
+    if (!entry) {
+      logEvent({
+        eventType: 'certificate_verify_attempt',
+        actorLabel: 'anonymous verifier',
+        targetCertId: rawId,
+        detail: 'not_found',
+      })
+      return res.json({
+        status: 'not_found',
+        message: `Certificate ID "${rawId}" was not found in the database.`,
+      })
+    }
+
+    // 2. SHA-256 Hash Cryptographic Verification
+    const recomputed = sha256(
+      buildCertString({
+        studentName: entry.student_name,
+        studentEmail: entry.student_email,
+        course: entry.course,
+        institution: entry.institution,
+        issueDate: entry.issue_date,
+      })
+    )
+
+    if (recomputed !== entry.hash) {
+      logEvent({
+        eventType: 'certificate_verify_attempt',
+        actorLabel: 'anonymous verifier',
+        targetCertId: entry.id,
+        detail: 'tampered',
+      })
+      return res.json({
+        status: 'tampered',
+        message: 'Cryptographic hash mismatch. Certificate data appears to have been modified or tampered with.',
+        certificate: withFraudDetails(entry),
+      })
+    }
+
+    // 3. Student Name Verification (if provided)
+    if (queryStudentName && !namesMatch(queryStudentName, entry.student_name)) {
+      logEvent({
+        eventType: 'certificate_verify_attempt',
+        actorLabel: 'anonymous verifier',
+        targetCertId: entry.id,
+        detail: 'name_mismatch',
+      })
+      return res.json({
+        status: 'name_mismatch',
+        message: `Student name does not match the certificate record.`,
+        registeredName: entry.student_name,
+        providedName: queryStudentName,
+        certificate: withFraudDetails(entry),
+      })
+    }
+
+    // 4. Verification Successful
+    logEvent({
+      eventType: 'certificate_verify_attempt',
+      actorLabel: 'anonymous verifier',
+      targetCertId: entry.id,
+      detail: 'verified',
     })
-  )
 
-  const status = recomputed === entry.hash ? 'verified' : 'tampered'
+    return res.json({
+      status: 'verified',
+      message: 'Certificate successfully verified via database lookup and SHA-256 proof.',
+      certificate: withFraudDetails(entry),
+      verification: {
+        hashVerified: true,
+        hash: entry.hash,
+        verifiedAt: new Date().toISOString(),
+      },
+    })
+  } catch (err) {
+    console.error('Verification error:', err)
+    return res.status(500).json({ status: 'error', message: 'Internal verification error.' })
+  }
+})
 
-  logEvent({ eventType: 'certificate_verify_attempt', actorLabel: 'anonymous verifier', targetCertId: entry.id, detail: status })
-
-  res.json({ status, certificate: withFraudDetails(entry) })
+// Optional POST /api/certificates/verify support
+router.post('/verify', (req, res) => {
+  const { id, studentName } = req.body
+  req.params.id = id
+  req.query.studentName = studentName
+  return router.handle(req, res)
 })
 
 export default router

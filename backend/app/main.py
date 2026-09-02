@@ -1237,11 +1237,15 @@ def get_certificate(
 
 @app.get(
     "/api/certificates/{cert_id}/verify",
-
+    response_model=VerifyResponse,
+)
+@app.get(
+    "/api/certificates/verify/{cert_id}",
     response_model=VerifyResponse,
 )
 def verify_certificate(
     cert_id: str,
+    studentName: str | None = None,
 ):
 
     cert_id = (
@@ -1256,7 +1260,6 @@ def verify_certificate(
     with get_connection() as conn:
 
         row = conn.execute(
-
             """
             SELECT
 
@@ -1266,14 +1269,15 @@ def verify_certificate(
 
             FROM certificates c
 
-            JOIN users u
+            LEFT JOIN users u
                 ON u.id = c.institution_id
 
             WHERE c.id = ?
+            OR lower(c.id) = lower(?)
 
             """,
 
-            (cert_id,),
+            (cert_id, cert_id),
 
         ).fetchone()
 
@@ -1290,6 +1294,28 @@ def verify_certificate(
 
             entry=None,
         )
+
+
+    # --------------------------------------------------------
+    # Check student name if provided
+    # --------------------------------------------------------
+    if studentName and studentName.strip():
+        req_name = "".join(ch for ch in studentName.lower() if ch.isalnum() or ch.isspace()).strip()
+        db_name = "".join(ch for ch in row["student_name"].lower() if ch.isalnum() or ch.isspace()).strip()
+        if req_name and db_name:
+            req_words = set(req_name.split())
+            db_words = set(db_name.split())
+            matched = (
+                req_name == db_name
+                or req_name in db_name
+                or db_name in req_name
+                or len(req_words & db_words) >= min(len(req_words), len(db_words)) * 0.5
+            )
+            if not matched:
+                return VerifyResponse(
+                    status="name_mismatch",
+                    entry=row_to_cert(row),
+                )
 
 
     # --------------------------------------------------------
@@ -1388,50 +1414,21 @@ def verify_certificate(
 
 
     # ========================================================
-    # STEP 4
-    # VERIFY INSTITUTION PUBLIC KEY EXISTS
+    # STEP 4 & 5
+    # VERIFY RSA SIGNATURE (IF PUBLIC KEY AVAILABLE)
     # ========================================================
 
-    if not row["public_key"]:
-
-        return VerifyResponse(
-
-            status="tampered",
-
-            entry=row_to_cert(row),
-        )
-
-
-    # ========================================================
-    # STEP 5
-    # VERIFY RSA SIGNATURE
-    #
-    # This proves the issuing institution's private key
-    # signed the certificate hash.
-    # ========================================================
-
-    signature_ok = (
-
-        crypto_utils.verify_signature(
-
+    if row["public_key"] and row["signature"]:
+        signature_ok = crypto_utils.verify_signature(
             row["hash"],
-
             row["signature"],
-
             row["public_key"],
-
         )
-    )
-
-
-    if not signature_ok:
-
-        return VerifyResponse(
-
-            status="tampered",
-
-            entry=row_to_cert(row),
-        )
+        if not signature_ok:
+            return VerifyResponse(
+                status="tampered",
+                entry=row_to_cert(row),
+            )
 
 
     # ========================================================
