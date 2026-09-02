@@ -5,12 +5,10 @@ const AUTH_TOKEN_KEY = 'authnode_token'
 export function getToken() {
   try { return localStorage.getItem(AUTH_TOKEN_KEY) } catch { return null }
 }
-
 export function setToken(token) {
   if (!token) return
   try { localStorage.setItem(AUTH_TOKEN_KEY, token) } catch {}
 }
-
 export function clearToken() {
   try { localStorage.removeItem(AUTH_TOKEN_KEY) } catch {}
 }
@@ -22,10 +20,10 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
 
   let response
   try {
+    // AuthNode uses JWT Bearer authentication, not a cookie session.
     response = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
-      credentials: 'include',
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
   } catch {
@@ -50,7 +48,6 @@ async function downloadRequest(path, filename) {
   const token = getToken()
   const response = await fetch(`${API_BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
-    credentials: 'include',
   })
   if (!response.ok) {
     const data = await response.json().catch(() => ({}))
@@ -80,13 +77,11 @@ export const api = {
     return data
   },
 
-  // Backend uses stateless JWT authentication, so logout only clears the client token.
   logout: async () => {
     clearToken()
     return { ok: true }
   },
 
-  // Matches backend GET /api/auth/me.
   session: () => request('/auth/me'),
 
   issueCertificate: (payload) => request('/certificates/issue', {
@@ -99,7 +94,6 @@ export const api = {
     },
   }),
 
-  // Matches backend GET /api/certificates/mine.
   studentCertificates: async () => {
     const data = await request('/certificates/mine')
     return { ...data, certificates: Array.isArray(data?.certificates) ? data.certificates : [] }
@@ -110,7 +104,7 @@ export const api = {
     return { ...data, certificates: Array.isArray(data?.certificates) ? data.certificates : [] }
   },
 
-  // Certificate verification is PUBLIC and does not require login.
+  // Public certificate verification. A verifier never needs to log in.
   getCertificate: (id) => request(`/certificates/verify/${encodeURIComponent(id)}`, { auth: false }),
   verifyCertificate: (id) => request(`/certificates/verify/${encodeURIComponent(id)}`, { auth: false }),
 
