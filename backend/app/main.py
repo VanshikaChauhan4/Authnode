@@ -1182,6 +1182,435 @@ def student_certificates(
 
 
 # ============================================================
+# VERIFY TWO DOCUMENTS
+# ============================================================
+#
+# The frontend OCRs:
+#   1. certificate email image
+#   2. certificate image
+#
+# This endpoint compares both OCR results with each other and
+# then verifies the certificate against the authoritative
+# SQLite record + SHA-256 + RSA signature.
+#
+# It intentionally accepts plain JSON instead of multipart
+# uploads so no new python-multipart dependency is required.
+# ============================================================
+
+def _normalize_verification_text(value: str | None) -> str:
+    return " ".join(
+        "".join(
+            ch.lower() if ch.isalnum() or ch.isspace() else " "
+            for ch in str(value or "")
+        ).split()
+    )
+
+
+def _normalize_verification_id(value: str | None) -> str:
+    return "".join(
+        ch.lower()
+        for ch in str(value or "")
+        if ch.isalnum()
+    )
+
+
+def _names_match(name_a: str | None, name_b: str | None) -> bool:
+    a = _normalize_verification_text(name_a)
+    b = _normalize_verification_text(name_b)
+
+    if not a or not b:
+        return False
+
+    if a == b or a in b or b in a:
+        return True
+
+    a_words = set(a.split())
+    b_words = set(b.split())
+
+    if not a_words or not b_words:
+        return False
+
+    common = len(a_words & b_words)
+    return common >= min(len(a_words), len(b_words)) * 0.7
+
+
+def _lookup_certificate(cert_id: str):
+    with get_connection() as conn:
+        return conn.execute(
+            """
+            SELECT c.*, u.public_key
+            FROM certificates c
+            LEFT JOIN users u
+                ON u.id = c.institution_id
+            WHERE c.id = ?
+               OR lower(c.id) = lower(?)
+            """,
+            (cert_id.strip(), cert_id.strip()),
+        ).fetchone()
+
+
+def _cryptographically_verify_row(row):
+    if row["status"] == "REVOKED":
+        return "revoked"
+
+    canonical_certificate = "|".join(
+        [
+            row["student_name"].strip(),
+            row["student_email"].strip().lower(),
+            row["course"].strip(),
+            row["certificate_title"].strip(),
+            row["institution_id"],
+            row["institution"].strip(),
+            row["issue_date"].strip(),
+        ]
+    )
+
+    recomputed_hash = crypto_utils.fingerprint(canonical_certificate)
+
+    if recomputed_hash != row["hash"]:
+        return "tampered"
+
+    if row["public_key"] and row["signature"]:
+        signature_ok = crypto_utils.verify_signature(
+            row["hash"],
+            row["signature"],
+            row["public_key"],
+        )
+        if not signature_ok:
+            return "tampered"
+
+    return "verified"
+
+
+@app.post("/api/certificates/verify-documents")
+async def verify_two_documents(request: Request):
+    """
+    Final verification flow:
+
+    email image OCR
+          +
+    certificate image OCR
+          ↓
+    document-to-document comparison
+          ↓
+    SQLite certificate lookup
+          ↓
+    SHA-256 verification
+          ↓
+    RSA signature verification
+          ↓
+    verified / rejected
+    """
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON verification request",
+        )
+
+    email_data = body.get("email") or {}
+    certificate_data = body.get("certificate") or {}
+
+    email_id = str(email_data.get("certificateId") or "").strip()
+    certificate_id = str(
+        certificate_data.get("certificateId") or ""
+    ).strip()
+
+    email_name = str(email_data.get("studentName") or "").strip()
+    certificate_name = str(
+        certificate_data.get("studentName") or ""
+    ).strip()
+
+    email_address = str(
+        email_data.get("studentEmail") or ""
+    ).strip().lower()
+
+    email_course = str(
+        email_data.get("course") or ""
+    ).strip()
+
+    certificate_course = str(
+        certificate_data.get("course") or ""
+    ).strip()
+
+    email_institution = str(
+        email_data.get("institution") or ""
+    ).strip()
+
+    certificate_institution = str(
+        certificate_data.get("institution") or ""
+    ).strip()
+
+    # --------------------------------------------------------
+    # Required OCR data
+    # --------------------------------------------------------
+
+    if not email_id:
+        return {
+            "status": "document_mismatch",
+            "reason": "email_certificate_id_missing",
+            "message": (
+                "The certificate ID could not be read from "
+                "the certificate email."
+            ),
+        }
+
+    if not certificate_id:
+        return {
+            "status": "document_mismatch",
+            "reason": "certificate_id_missing",
+            "message": (
+                "The certificate ID could not be read from "
+                "the certificate image."
+            ),
+        }
+
+    if not email_name:
+        return {
+            "status": "document_mismatch",
+            "reason": "email_name_missing",
+            "message": (
+                "The student name could not be read from "
+                "the certificate email."
+            ),
+        }
+
+    if not certificate_name:
+        return {
+            "status": "document_mismatch",
+            "reason": "certificate_name_missing",
+            "message": (
+                "The student name could not be read from "
+                "the certificate image."
+            ),
+        }
+
+    # --------------------------------------------------------
+    # Compare BOTH uploaded documents
+    # --------------------------------------------------------
+
+    if _normalize_verification_id(email_id) != _normalize_verification_id(
+        certificate_id
+    ):
+        return {
+            "status": "document_mismatch",
+            "reason": "certificate_id_mismatch",
+            "message": (
+                "The Certificate ID in the certificate email "
+                "does not match the Certificate ID on the "
+                "certificate image."
+            ),
+            "emailCertificateId": email_id,
+            "certificateId": certificate_id,
+        }
+
+    if not _names_match(email_name, certificate_name):
+        return {
+            "status": "document_mismatch",
+            "reason": "student_name_mismatch",
+            "message": (
+                "The student name in the certificate email "
+                "does not match the student name on the "
+                "certificate image."
+            ),
+            "emailName": email_name,
+            "certificateName": certificate_name,
+        }
+
+    # If both documents contain course/institution data,
+    # compare them. Missing OCR data is tolerated because
+    # layouts differ between emails and certificates.
+    if (
+        email_course
+        and certificate_course
+        and _normalize_verification_text(email_course)
+        != _normalize_verification_text(certificate_course)
+    ):
+        return {
+            "status": "document_mismatch",
+            "reason": "course_mismatch",
+            "message": (
+                "The course shown in the certificate email "
+                "does not match the certificate image."
+            ),
+        }
+
+    if (
+        email_institution
+        and certificate_institution
+        and _normalize_verification_text(email_institution)
+        not in _normalize_verification_text(certificate_institution)
+        and _normalize_verification_text(certificate_institution)
+        not in _normalize_verification_text(email_institution)
+    ):
+        return {
+            "status": "document_mismatch",
+            "reason": "institution_mismatch",
+            "message": (
+                "The institution shown in the certificate "
+                "email does not match the certificate image."
+            ),
+        }
+
+    # --------------------------------------------------------
+    # Find the authoritative certificate in SQLite
+    # --------------------------------------------------------
+
+    row = _lookup_certificate(certificate_id)
+
+    if not row:
+        return {
+            "status": "not_found",
+            "certificateId": certificate_id,
+            "message": (
+                "No certificate with this Certificate ID "
+                "exists in the AuthNode database."
+            ),
+        }
+
+    # --------------------------------------------------------
+    # Compare both documents with the official DB record
+    # --------------------------------------------------------
+
+    official_id = str(row["id"] or "").strip()
+    official_name = str(
+        row["student_name"] or ""
+    ).strip()
+    official_email = str(
+        row["student_email"] or ""
+    ).strip().lower()
+    official_course = str(
+        row["course"] or ""
+    ).strip()
+    official_institution = str(
+        row["institution"] or ""
+    ).strip()
+
+    if _normalize_verification_id(certificate_id) != _normalize_verification_id(
+        official_id
+    ):
+        return {
+            "status": "document_mismatch",
+            "reason": "database_id_mismatch",
+            "message": (
+                "The Certificate ID from the uploaded documents "
+                "does not match the official database record."
+            ),
+            "certificate": row_to_cert(row),
+        }
+
+    if not _names_match(certificate_name, official_name):
+        return {
+            "status": "name_mismatch",
+            "reason": "database_name_mismatch",
+            "message": (
+                "The student name on the uploaded certificate "
+                "does not match the official database record."
+            ),
+            "certificate": row_to_cert(row),
+            "detectedName": certificate_name,
+            "officialName": official_name,
+        }
+
+    # The email screenshot is specifically used to establish
+    # that the certificate notification belongs to the same
+    # official student record.
+    if email_address and email_address != official_email:
+        return {
+            "status": "email_mismatch",
+            "reason": "database_email_mismatch",
+            "message": (
+                "The email address in the certificate email "
+                "does not match the official certificate record."
+            ),
+            "certificate": row_to_cert(row),
+        }
+
+    if (
+        certificate_course
+        and official_course
+        and _normalize_verification_text(certificate_course)
+        != _normalize_verification_text(official_course)
+    ):
+        return {
+            "status": "course_mismatch",
+            "reason": "database_course_mismatch",
+            "message": (
+                "The course on the uploaded certificate does "
+                "not match the official database record."
+            ),
+            "certificate": row_to_cert(row),
+        }
+
+    if (
+        certificate_institution
+        and official_institution
+        and _normalize_verification_text(certificate_institution)
+        not in _normalize_verification_text(official_institution)
+        and _normalize_verification_text(official_institution)
+        not in _normalize_verification_text(certificate_institution)
+    ):
+        return {
+            "status": "institution_mismatch",
+            "reason": "database_institution_mismatch",
+            "message": (
+                "The institution on the uploaded certificate "
+                "does not match the official database record."
+            ),
+            "certificate": row_to_cert(row),
+        }
+
+    # --------------------------------------------------------
+    # Cryptographic verification
+    # --------------------------------------------------------
+
+    crypto_status = _cryptographically_verify_row(row)
+
+    if crypto_status == "revoked":
+        return {
+            "status": "revoked",
+            "certificate": row_to_cert(row),
+            "certificateId": official_id,
+            "message": "This certificate has been revoked.",
+        }
+
+    if crypto_status == "tampered":
+        return {
+            "status": "tampered",
+            "certificate": row_to_cert(row),
+            "certificateId": official_id,
+            "message": (
+                "The certificate exists, but its SHA-256 "
+                "or RSA cryptographic integrity check failed."
+            ),
+        }
+
+    return {
+        "status": "verified",
+        "certificate": row_to_cert(row),
+        "certificateId": official_id,
+        "checks": {
+            "emailCertificateIdMatch": True,
+            "emailCertificateNameMatch": True,
+            "databaseCertificateIdMatch": True,
+            "databaseStudentMatch": True,
+            "databaseEmailMatch": True,
+            "sha256Match": True,
+            "rsaSignatureValid": bool(
+                row["public_key"] and row["signature"]
+            ),
+        },
+        "message": (
+            "Certificate verified successfully. The email and "
+            "certificate match, the official SQLite record "
+            "matches, and the cryptographic integrity check passed."
+        ),
+    }
+
+
+# ============================================================
 # GET CERTIFICATE BY ID
 # ============================================================
 

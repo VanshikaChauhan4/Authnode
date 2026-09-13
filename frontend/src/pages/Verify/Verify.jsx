@@ -14,124 +14,204 @@ import {
   Upload,
   User,
   Hash,
+  Mail,
 } from 'lucide-react'
 import { createWorker } from 'tesseract.js'
+import { useAuth } from '../../context/AuthContext'
 import './Verify.css'
 
-/* ============================================================
-   OCR TEXT PARSING HELPERS
-============================================================ */
+const API_BASE = (
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:5000/api'
+).replace(/\/+$/, '')
 
-function preprocessOcrText(rawText = '') {
-  if (!rawText) return ''
-  // 1. Rejoin hyphenated line breaks: e.g. "TBI-2026-PTQU-\nFZ45" -> "TBI-2026-PTQU-FZ45"
-  let text = rawText.replace(/([A-Za-z0-9]+-)\s*[\r\n]+\s*([A-Za-z0-9]+)/g, '$1$2')
-  // 2. Normalize horizontal spaces
-  text = text.replace(/[ \t]+/g, ' ')
-  return text
+const IMAGE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+]
+
+function normalizeText(value = '') {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
-function extractCertificateId(rawText) {
+function normalizeId(value = '') {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim()
+}
+
+function namesMatch(nameA, nameB) {
+  const a = normalizeText(nameA)
+  const b = normalizeText(nameB)
+
+  if (!a || !b) return false
+  if (a === b || a.includes(b) || b.includes(a)) return true
+
+  const aParts = [...new Set(a.split(' ').filter(Boolean))]
+  const bParts = [...new Set(b.split(' ').filter(Boolean))]
+
+  if (!aParts.length || !bParts.length) return false
+
+  const common = aParts.filter((part) => bParts.includes(part))
+
+  return common.length >= Math.min(aParts.length, bParts.length) * 0.7
+}
+
+function preprocessOcrText(rawText = '') {
+  let text = String(rawText || '')
+
+  text = text.replace(
+    /([A-Za-z0-9]+-)\s*[\r\n]+\s*([A-Za-z0-9]+)/g,
+    '$1$2'
+  )
+
+  return text
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\r/g, '')
+}
+
+function extractCertificateId(rawText = '') {
   const text = preprocessOcrText(rawText)
+
   if (!text) return ''
 
-  // Priority 1: Specifically preceded by "CERTIFICATE ID", "CERTIFICATE NO", etc.
-  const certIdRegexes = [
-    /certificate\s*(?:id|no|number|code|#)\s*[:#-]?\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{8,})/i,
-    /cert\s*(?:id|no|number|code|#)\s*[:#-]?\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{8,})/i,
+  const explicitPatterns = [
+    /certificate\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{6,})/i,
+    /cert\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{6,})/i,
+    /certificate\s*#\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{6,})/i,
+    /credential\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9_-]{6,40})/i,
+    /verification\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9_-]{6,40})/i,
   ]
 
-  for (const regex of certIdRegexes) {
-    const match = text.match(regex)
+  for (const pattern of explicitPatterns) {
+    const match = text.match(pattern)
+
     if (match?.[1]) {
-      const candidate = match[1].trim()
-      if (candidate.length >= 6 && !/^(intern|details|verification|name|role|click)$/i.test(candidate)) {
+      const candidate = match[1]
+        .replace(/[|_*]/g, '')
+        .trim()
+
+      if (
+        candidate.length >= 6 &&
+        !/^(intern|details|verification|name|role|click)$/i.test(
+          candidate
+        )
+      ) {
         return candidate
       }
     }
   }
 
-  // Priority 2: Multi-segmented hyphenated code (e.g. TBI-2026-PTQU-FZ45 has 3+ dashes)
-  // Distinguishes Certificate ID from single-hyphen IDs like Intern ID (TBI-26100255)
-  const multiSegmentMatches = text.match(/\b([A-Z0-9]{2,8}(?:-[A-Z0-9]{2,10}){2,5})\b/gi)
-  if (multiSegmentMatches && multiSegmentMatches.length > 0) {
-    return multiSegmentMatches[0].trim()
-  }
+  const multiSegmentMatches = text.match(
+    /\b([A-Z0-9]{2,10}(?:-[A-Z0-9]{2,12}){2,5})\b/gi
+  )
 
-  // Priority 3: Fallback patterns
-  const fallbackPatterns = [
-    /(?:credential|verification|license)\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9-_]{6,30})/i,
-    /\b([a-f0-9]{12})\b/i,
-  ]
-
-  for (const pattern of fallbackPatterns) {
-    const match = text.match(pattern)
-    if (match?.[1]) {
-      return match[1].trim()
+  if (multiSegmentMatches?.length) {
+    for (const candidate of multiSegmentMatches) {
+      if (
+        !/^(intern|student|employee|user)[-_ ]?id/i.test(
+          candidate
+        )
+      ) {
+        return candidate.trim()
+      }
     }
   }
 
-  // Priority 4: Look line-by-line, EXPLICITLY SKIPPING lines with "intern id" or "student id"
-  const lines = text.split('\n')
-  for (const line of lines) {
-    if (/intern\s*id|student\s*id|employee\s*id|user\s*id/i.test(line)) {
-      continue // Skip Intern ID like TBI-26100255!
-    }
-    const match = line.match(/\b([A-Z]{2,6}-[0-9A-Z]{4,16})\b/i)
-    if (match?.[1]) {
-      return match[1].trim()
-    }
-  }
+  const fallback = text.match(
+    /\b([A-Z]{2,10}-[0-9A-Z]{4,20}(?:-[0-9A-Z]{2,20})*)\b/i
+  )
 
-  return ''
+  return fallback?.[1]?.trim() || ''
 }
 
-function extractStudentName(rawText) {
+function cleanName(value = '') {
+  return String(value)
+    .replace(/[|*_#]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(
+      /\s+(?:for|has|in recognition|on|who|with|at|from|successfully|role|intern|certificate)\b.*$/i,
+      ''
+    )
+    .replace(/[,.:;]+$/, '')
+    .trim()
+}
+
+function isReasonableName(value = '') {
+  const name = cleanName(value)
+
+  if (name.length < 2 || name.length > 80) return false
+
+  const parts = name.split(/\s+/).filter(Boolean)
+
+  if (parts.length < 2) return false
+
+  return parts.every((part) =>
+    /^[A-Za-z][A-Za-z'.-]*$/.test(part)
+  )
+}
+
+function extractStudentName(rawText = '') {
   const text = preprocessOcrText(rawText)
+
   if (!text) return ''
 
   const patterns = [
-    // 1. "INTERN NAME", "STUDENT NAME", "CANDIDATE NAME", "RECIPIENT NAME"
-    /(?:intern|student|candidate|recipient|learner|participant)\s*name\s*[:\-]?\s*([A-Za-z][A-Za-z'.]+(?:\s+[A-Za-z][A-Za-z'.]+){1,3})/i,
-
-    // 2. "INTERN:" or "STUDENT:" followed by name
-    /(?:intern|student|candidate|recipient)\s*[:\-]\s*([A-Za-z][A-Za-z'.]+(?:\s+[A-Za-z][A-Za-z'.]+){1,3})/i,
-
-    // 3. Awarded to / Presented to / Issued to
-    /(?:is\s+)?(?:awarded|presented|conferred|granted|issued)\s+to\s*[:\-]?\s*([A-Za-z][A-Za-z'.]+(?:\s+[A-Za-z][A-Za-z'.]+){1,3})/i,
-
-    // 4. This certifies that [Name]
-    /this\s+(?:is\s+to\s+)?certif(?:y\s+that|ies\s+that)\s+([A-Za-z][A-Za-z'.]+(?:\s+[A-Za-z][A-Za-z'.]+){1,3})/i,
-
-    // 5. Generic "Name: Vanshika Chauhan"
-    /\bname\s*[:\-]\s*([A-Za-z][A-Za-z'.]+(?:\s+[A-Za-z][A-Za-z'.]+){1,3})/i,
-
-    // 6. Email greeting: "Dear Vanshika Chauhan,"
-    /(?:dear|congratulations|hello|hi)\s+([A-Za-z][A-Za-z'.]+(?:\s+[A-Za-z][A-Za-z'.]+){1,3})/i,
+    /(?:intern|student|candidate|recipient|learner|participant)\s*name\s*[:\-]?\s*([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){1,5})/i,
+    /(?:intern|student|candidate|recipient)\s*[:\-]\s*([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){1,5})/i,
+    /(?:awarded|presented|conferred|granted|issued)\s+to\s*[:\-]?\s*([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){1,5})/i,
+    /this\s+(?:is\s+to\s+)?certif(?:y|ies)\s+that\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){1,5})/i,
+    /\bname\s*[:\-]\s*([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){1,5})/i,
+    /(?:dear|congratulations|hello|hi)\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){1,5})/i,
   ]
 
   for (const pattern of patterns) {
     const match = text.match(pattern)
+
     if (match?.[1]) {
-      let raw = match[1].replace(/[|*#_]/g, '').trim()
-      raw = raw.replace(/\s+(?:for|has|in recognition|on|who|with|at|from|successfully|role|intern|certificate)\b.*$/i, '').trim()
-      raw = raw.replace(/[,.:;]+$/, '').trim()
-      if (raw.length >= 2 && raw.length <= 50) {
-        return raw
+      const candidate = cleanName(match[1])
+
+      if (isReasonableName(candidate)) {
+        return candidate
       }
     }
   }
 
-  // Fallback for multi-line table format: check line containing "INTERN NAME" or "STUDENT NAME"
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
-  for (let i = 0; i < lines.length; i++) {
-    if (/(?:intern|student|candidate|recipient)\s*name/i.test(lines[i])) {
-      const onSameLine = lines[i].replace(/.*(?:intern|student|candidate|recipient)\s*name\s*[:\-]?/i, '').trim()
-      if (onSameLine && onSameLine.split(' ').length >= 2) {
-        return onSameLine
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const current = lines[i]
+
+    if (
+      /(?:intern|student|candidate|recipient|learner|participant)\s*name/i.test(
+        current
+      )
+    ) {
+      const sameLine = cleanName(
+        current.replace(
+          /.*?(?:intern|student|candidate|recipient|learner|participant)\s*name\s*[:\-]?\s*/i,
+          ''
+        )
+      )
+
+      if (isReasonableName(sameLine)) {
+        return sameLine
       }
-      if (i + 1 < lines.length && /^[A-Za-z][A-Za-z'.]+(\s+[A-Za-z][A-Za-z'.]+)+$/.test(lines[i + 1])) {
-        return lines[i + 1]
+
+      const nextLine = cleanName(lines[i + 1] || '')
+
+      if (isReasonableName(nextLine)) {
+        return nextLine
       }
     }
   }
@@ -139,255 +219,634 @@ function extractStudentName(rawText) {
   return ''
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+function extractEmail(rawText = '') {
+  const match = String(rawText).match(
+    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+  )
 
-/* ============================================================
-   MAIN COMPONENT
-============================================================ */
+  return match?.[0]?.toLowerCase().trim() || ''
+}
+
+function extractCourse(rawText = '') {
+  const text = preprocessOcrText(rawText)
+
+  const patterns = [
+    /(?:course|program|training|internship|certification)\s*(?:name|title)?\s*[:\-]\s*([^\n]{3,100})/i,
+    /(?:completed|successfully completed|completed the)\s+([A-Za-z0-9 .&'/-]{3,100})(?:\s+course|\s+program)?/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+
+    if (match?.[1]) {
+      const value = match[1]
+        .replace(/\s+/g, ' ')
+        .replace(/[|*_]+/g, '')
+        .trim()
+
+      if (value.length >= 3 && value.length <= 100) {
+        return value
+      }
+    }
+  }
+
+  return ''
+}
+
+function extractInstitution(rawText = '') {
+  const text = preprocessOcrText(rawText)
+
+  const patterns = [
+    /(?:institution|issuer|issued\s+by|organization|university|college)\s*[:\-]\s*([^\n]{3,120})/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+
+    if (match?.[1]) {
+      return match[1]
+        .replace(/\s+/g, ' ')
+        .replace(/[|*_]+/g, '')
+        .trim()
+    }
+  }
+
+  return ''
+}
+
+async function runOcr(file, onProgress) {
+  let worker = null
+
+  try {
+    worker = await createWorker('eng', 1, {
+      logger: (message) => {
+        if (
+          message.status === 'recognizing text' &&
+          typeof message.progress === 'number'
+        ) {
+          onProgress(Math.round(message.progress * 100))
+        }
+      },
+    })
+
+    await worker.setParameters({
+      preserve_interword_spaces: '1',
+    })
+
+    const recognition = await worker.recognize(file)
+
+    return recognition?.data?.text || ''
+  } finally {
+    if (worker) {
+      try {
+        await worker.terminate()
+      } catch {
+        // Ignore OCR worker cleanup errors.
+      }
+    }
+  }
+}
+
+function parseEmailDocument(text) {
+  return {
+    studentName: extractStudentName(text),
+    studentEmail: extractEmail(text),
+    certificateId: extractCertificateId(text),
+    course: extractCourse(text),
+    institution: extractInstitution(text),
+  }
+}
+
+function parseCertificateDocument(text) {
+  return {
+    studentName: extractStudentName(text),
+    studentEmail: extractEmail(text),
+    certificateId: extractCertificateId(text),
+    course: extractCourse(text),
+    institution: extractInstitution(text),
+  }
+}
 
 export default function Verify() {
   const navigate = useNavigate()
   const { id: idFromRoute } = useParams()
-  const fileInputRef = useRef(null)
+  const { user, loading } = useAuth()
 
-  const [stage, setStage] = useState('upload') // 'upload' | 'ready' | 'scanning' | 'review' | 'result'
-  const [selectedFile, setSelectedFile] = useState(null)
-  const [previewUrl, setPreviewUrl] = useState('')
-  const [ocrText, setOcrText] = useState('')
+  const emailInputRef = useRef(null)
+  const certificateInputRef = useRef(null)
+
+  const [stage, setStage] = useState('upload')
+
+  const [emailFile, setEmailFile] = useState(null)
+  const [certificateFile, setCertificateFile] = useState(null)
+
+  const [emailPreviewUrl, setEmailPreviewUrl] = useState('')
+  const [certificatePreviewUrl, setCertificatePreviewUrl] = useState('')
+
+  const [emailOcrText, setEmailOcrText] = useState('')
+  const [certificateOcrText, setCertificateOcrText] = useState('')
+
+  const [emailData, setEmailData] = useState(null)
+  const [certificateData, setCertificateData] = useState(null)
+
   const [ocrProgress, setOcrProgress] = useState(0)
-
-  // Extracted and editable fields
-  const [certificateId, setCertificateId] = useState(idFromRoute || '')
-  const [studentName, setStudentName] = useState('')
-  const [extractedId, setExtractedId] = useState('')
-  const [extractedName, setExtractedName] = useState('')
+  const [ocrDocument, setOcrDocument] = useState('')
 
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
+
   const [isProcessing, setIsProcessing] = useState(false)
   const [isVerifying, setIsVerifying] = useState(false)
 
   useEffect(() => {
-    if (idFromRoute) {
-      setCertificateId(idFromRoute)
+    if (loading) return
+
+    if (!user || user.role !== 'student') {
+      navigate('/auth?role=student')
     }
-  }, [idFromRoute])
+  }, [user, loading, navigate])
 
   useEffect(() => {
     return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl)
+      if (emailPreviewUrl) {
+        URL.revokeObjectURL(emailPreviewUrl)
+      }
+
+      if (certificatePreviewUrl) {
+        URL.revokeObjectURL(certificatePreviewUrl)
       }
     }
-  }, [previewUrl])
+  }, [emailPreviewUrl, certificatePreviewUrl])
 
-  function handleFileSelect(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
+  function validateImage(file) {
+    if (!file) return 'Please select an image.'
 
-    setError('')
-    setResult(null)
-    setOcrText('')
-    setExtractedId('')
-    setExtractedName('')
-
-    if (!file.type.startsWith('image/')) {
-      setError('Please upload an image file such as PNG, JPG, JPEG, or WEBP.')
-      return
+    if (!IMAGE_TYPES.includes(file.type)) {
+      return 'Please upload PNG, JPG, JPEG or WEBP.'
     }
 
     if (file.size > 10 * 1024 * 1024) {
-      setError('Image size must be less than 10 MB.')
+      return 'Each image must be smaller than 10 MB.'
+    }
+
+    return ''
+  }
+
+  function handleEmailSelect(event) {
+    const file = event.target.files?.[0]
+
+    if (!file) return
+
+    const validationError = validateImage(file)
+
+    if (validationError) {
+      setError(validationError)
       return
     }
 
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl)
+    if (emailPreviewUrl) {
+      URL.revokeObjectURL(emailPreviewUrl)
     }
 
-    setSelectedFile(file)
-    setPreviewUrl(URL.createObjectURL(file))
+    setEmailFile(file)
+    setEmailPreviewUrl(URL.createObjectURL(file))
+
+    setEmailOcrText('')
+    setEmailData(null)
+    setCertificateData(null)
+    setResult(null)
+    setError('')
     setStage('ready')
   }
 
-  async function readCertificateImage() {
-    if (!selectedFile) {
-      setError('Please upload your certificate email screenshot first.')
+  function handleCertificateSelect(event) {
+    const file = event.target.files?.[0]
+
+    if (!file) return
+
+    const validationError = validateImage(file)
+
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+
+    if (certificatePreviewUrl) {
+      URL.revokeObjectURL(certificatePreviewUrl)
+    }
+
+    setCertificateFile(file)
+    setCertificatePreviewUrl(URL.createObjectURL(file))
+
+    setCertificateOcrText('')
+    setCertificateData(null)
+    setResult(null)
+    setError('')
+    setStage('ready')
+  }
+
+  async function readBothDocuments() {
+    if (!emailFile || !certificateFile) {
+      setError(
+        'Please upload both the certificate email image and the certificate image.'
+      )
       return
     }
 
     setError('')
     setResult(null)
-    setStage('scanning')
     setIsProcessing(true)
+    setStage('scanning')
     setOcrProgress(0)
 
-    let worker = null
-
     try {
-      worker = await createWorker('eng', 1, {
-        logger: (message) => {
-          if (message.status === 'recognizing text' && typeof message.progress === 'number') {
-            setOcrProgress(Math.round(message.progress * 100))
-          }
-        },
-      })
+      setOcrDocument('email')
 
-      await worker.setParameters({
-        preserve_interword_spaces: '1',
-      })
+      const emailText = await runOcr(
+        emailFile,
+        (progress) => {
+          setOcrProgress(Math.round(progress * 0.5))
+        }
+      )
 
-      const recognition = await worker.recognize(selectedFile)
-      const text = recognition?.data?.text || ''
+      const parsedEmail = parseEmailDocument(emailText)
 
-      setOcrText(text)
+      setEmailOcrText(emailText)
+      setEmailData(parsedEmail)
 
-      const detectedId = extractCertificateId(text)
-      const detectedName = extractStudentName(text)
+      setOcrDocument('certificate')
 
-      setExtractedId(detectedId)
-      setExtractedName(detectedName)
+      const certificateText = await runOcr(
+        certificateFile,
+        (progress) => {
+          setOcrProgress(50 + Math.round(progress * 0.5))
+        }
+      )
 
-      if (detectedId) setCertificateId(detectedId)
-      if (detectedName) setStudentName(detectedName)
+      const parsedCertificate =
+        parseCertificateDocument(certificateText)
+
+      setCertificateOcrText(certificateText)
+      setCertificateData(parsedCertificate)
 
       setOcrProgress(100)
+
+      if (!parsedEmail.certificateId) {
+        setResult({
+          status: 'ocr_failed',
+          message:
+            'Certificate ID could not be read from the certificate email image.',
+        })
+        setStage('result')
+        return
+      }
+
+      if (!parsedCertificate.certificateId) {
+        setResult({
+          status: 'ocr_failed',
+          message:
+            'Certificate ID could not be read from the certificate image.',
+        })
+        setStage('result')
+        return
+      }
+
+      if (!parsedEmail.studentName) {
+        setResult({
+          status: 'ocr_failed',
+          message:
+            'Student name could not be read from the certificate email image.',
+        })
+        setStage('result')
+        return
+      }
+
+      if (!parsedCertificate.studentName) {
+        setResult({
+          status: 'ocr_failed',
+          message:
+            'Student name could not be read from the certificate image.',
+        })
+        setStage('result')
+        return
+      }
+
       setStage('review')
     } catch (err) {
-      console.error('OCR scanning failed:', err)
-      setError('Could not process this image. Please upload a clearer screenshot.')
-      setStage('ready')
+      console.error('Two-document OCR failed:', err)
+
+      setResult({
+        status: 'ocr_failed',
+        message:
+          err?.message ||
+          'Could not read one or both images. Please upload clearer images.',
+      })
+
+      setStage('result')
     } finally {
-      if (worker) {
-        try {
-          await worker.terminate()
-        } catch {
-          // Silent cleanup
-        }
-      }
       setIsProcessing(false)
     }
   }
 
-  async function verifyWithBackend() {
-    const cleanId = (certificateId || extractedId).trim()
-    const cleanName = (studentName || extractedName).trim()
+  async function verifyDocuments() {
+    if (!emailData || !certificateData) {
+      setError(
+        'Please read both uploaded images before verification.'
+      )
+      return
+    }
 
-    if (!cleanId) {
-      setError('Certificate ID is required. Please type it in if OCR did not detect it.')
+    if (
+      normalizeId(emailData.certificateId) !==
+      normalizeId(certificateData.certificateId)
+    ) {
+      setResult({
+        status: 'document_mismatch',
+        message:
+          'The Certificate ID in the email and certificate image do not match.',
+        emailCertificateId: emailData.certificateId,
+        certificateId: certificateData.certificateId,
+      })
+      setStage('result')
+      return
+    }
+
+    if (
+      !namesMatch(
+        emailData.studentName,
+        certificateData.studentName
+      )
+    ) {
+      setResult({
+        status: 'document_mismatch',
+        message:
+          'The student name in the email and certificate image do not match.',
+        emailName: emailData.studentName,
+        certificateName: certificateData.studentName,
+      })
+      setStage('result')
       return
     }
 
     setError('')
+    setResult(null)
     setIsVerifying(true)
 
     try {
-      const queryParam = cleanName ? `?studentName=${encodeURIComponent(cleanName)}` : ''
-
-      const endpointsToTry = [
-        `${API_BASE}/certificates/${encodeURIComponent(cleanId)}/verify${queryParam}`,
-        `${API_BASE}/certificates/verify/${encodeURIComponent(cleanId)}${queryParam}`,
-        `/api/certificates/${encodeURIComponent(cleanId)}/verify${queryParam}`,
-        `/api/certificates/verify/${encodeURIComponent(cleanId)}${queryParam}`,
-      ]
+      const response = await fetch(
+        `${API_BASE}/certificates/verify-documents`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            email: emailData,
+            certificate: certificateData,
+          }),
+        }
+      )
 
       let data = null
-      let lastError = null
 
-      for (const endpoint of endpointsToTry) {
-        try {
-          const res = await fetch(endpoint, {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-          })
+      try {
+        data = await response.json()
+      } catch {
+        throw new Error(
+          `Verification server returned HTTP ${response.status}.`
+        )
+      }
 
-          if (res.ok || res.status === 404 || res.status === 400) {
-            data = await res.json()
-            break
-          }
-        } catch (fetchErr) {
-          lastError = fetchErr
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+          data?.message ||
+          `Verification server returned HTTP ${response.status}.`
+        )
+      }
+
+      if (data.status === 'verified') {
+        if (!data.certificate) {
+          throw new Error(
+            'The backend verified the certificate but did not return its official record.'
+          )
         }
-      }
 
-      if (!data) {
-        throw lastError || new Error('No response from verification server')
-      }
+        setResult({
+          status: 'verified',
+          certificate: data.certificate,
+          certificateId:
+            data.certificateId || data.certificate.id,
+          studentName:
+            data.certificate.student_name,
+          message:
+            data.message ||
+            'Certificate verified successfully.',
+          checks: data.checks || {},
+          emailData,
+          certificateData,
+        })
 
-      const certData = data.certificate || data.entry || null
+        setStage('result')
+        return
+      }
 
       setResult({
-        status: data.status,
-        message: data.message || (data.status === 'verified' ? 'Certificate authenticated successfully.' : ''),
-        certificate: certData,
-        certificateId: cleanId,
-        studentName: cleanName || certData?.student_name || 'N/A',
-        registeredName: data.registeredName || certData?.student_name,
-        verification: data.verification,
+        status: data.status || 'network_error',
+        certificate: data.certificate || null,
+        certificateId:
+          data.certificateId ||
+          certificateData.certificateId,
+        message:
+          data.message ||
+          'The certificate could not be verified.',
+        detectedName:
+          data.detectedName ||
+          certificateData.studentName,
+        officialName:
+          data.officialName ||
+          data.certificate?.student_name,
+        emailName: data.emailName,
+        certificateName: data.certificateName,
+        reason: data.reason,
       })
 
       setStage('result')
     } catch (err) {
-      console.error('Backend verification failed:', err)
-      setError('Unable to reach the verification server. Please ensure the backend is running on http://localhost:5000.')
+      console.error('Backend document verification failed:', err)
+
+      setResult({
+        status: 'network_error',
+        certificateId:
+          certificateData?.certificateId || '',
+        message:
+          err?.message ||
+          'AuthNode could not connect to the verification server.',
+      })
+
+      setStage('result')
     } finally {
       setIsVerifying(false)
     }
   }
 
   function continueToRecord() {
-    if (!result || result.status !== 'verified') return
+    if (
+      !result ||
+      result.status !== 'verified' ||
+      !result.certificate
+    ) {
+      return
+    }
+
+    const certificate = result.certificate
 
     navigate('/certificate-record', {
       state: {
         verifiedCertificate: {
-          certificateId: result.certificate?.id || result.certificateId,
-          studentName: result.certificate?.student_name || result.studentName,
-          course: result.certificate?.course,
-          institution: result.certificate?.institution,
-          issueDate: result.certificate?.issue_date,
-          hash: result.certificate?.hash,
-          verificationMethod: 'EMAIL_OCR_SHA256',
+          certificateId:
+            certificate.id ||
+            result.certificateId,
+
+          studentName:
+            certificate.student_name ||
+            result.studentName,
+
+          studentEmail:
+            certificate.student_email || '',
+
+          courseName:
+            certificate.course || '',
+
+          certificateTitle:
+            certificate.certificate_title ||
+            certificate.course ||
+            'Certificate of Completion',
+
+          issuerName:
+            certificate.institution ||
+            'AuthNode Institution',
+
+          issuerId:
+            certificate.institution_id || '',
+
+          issuedAt:
+            certificate.issue_date || '',
+
+          certificateHash:
+            certificate.hash || '',
+
+          status: 'VERIFIED',
+
+          verificationType:
+            'TWO_DOCUMENT_OCR_SHA256_RSA_DATABASE',
+
           verifiedAt: new Date().toISOString(),
-          sourceFileName: selectedFile?.name || '',
+
+          sourceFileName:
+            certificateFile?.name || '',
+
+          emailSourceFileName:
+            emailFile?.name || '',
+
+          extractedName:
+            certificateData?.studentName || '',
+
+          extractedId:
+            certificateData?.certificateId || '',
+
+          emailExtractedName:
+            emailData?.studentName || '',
+
+          emailExtractedId:
+            emailData?.certificateId || '',
+
+          emailExtractedAddress:
+            emailData?.studentEmail || '',
         },
       },
     })
   }
 
   function resetVerification() {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl)
+    if (emailPreviewUrl) {
+      URL.revokeObjectURL(emailPreviewUrl)
     }
+
+    if (certificatePreviewUrl) {
+      URL.revokeObjectURL(certificatePreviewUrl)
+    }
+
     setStage('upload')
-    setSelectedFile(null)
-    setPreviewUrl('')
-    setOcrText('')
+
+    setEmailFile(null)
+    setCertificateFile(null)
+
+    setEmailPreviewUrl('')
+    setCertificatePreviewUrl('')
+
+    setEmailOcrText('')
+    setCertificateOcrText('')
+
+    setEmailData(null)
+    setCertificateData(null)
+
     setOcrProgress(0)
-    setExtractedId('')
-    setExtractedName('')
-    setCertificateId(idFromRoute || '')
-    setStudentName('')
-    setResult(null)
+    setOcrDocument('')
+
     setError('')
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
+    setResult(null)
+
+    setIsProcessing(false)
+    setIsVerifying(false)
+
+    if (emailInputRef.current) {
+      emailInputRef.current.value = ''
     }
+
+    if (certificateInputRef.current) {
+      certificateInputRef.current.value = ''
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="container">
+          <p className="dashboard-loading">
+            Checking your account...
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user || user.role !== 'student') {
+    return null
   }
 
   return (
     <div className="page">
       <div className="container">
+
         <div className="page-header">
           <span className="eyebrow">Verify</span>
+
           <h1>Verify your certificate</h1>
+
           <p>
-            Upload the certificate email screenshot you received. AuthNode will read the Certificate ID and student name, then cryptographically verify the record against the database.
+            Upload both the certificate email and the certificate
+            image. AuthNode compares both documents, checks the
+            official SQLite record, and verifies cryptographic
+            integrity before allowing the certificate to continue.
           </p>
         </div>
 
         <div className="verify-layout">
           <AnimatePresence mode="wait">
+
             {(stage === 'upload' || stage === 'ready') && (
               <motion.div
                 key="upload"
@@ -396,15 +855,102 @@ export default function Verify() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -12 }}
               >
+
+                <div className="form-group">
+                  <label>Certificate ID (optional)</label>
+
+                  <input
+                    value={idFromRoute || ''}
+                    readOnly
+                    placeholder="Detected automatically from both images"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Student name</label>
+
+                  <input
+                    value={
+                      certificateData?.studentName ||
+                      emailData?.studentName ||
+                      ''
+                    }
+                    readOnly
+                    placeholder="Detected automatically from both images"
+                  />
+                </div>
+
                 <div
                   className="verify-upload-area"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() =>
+                    emailInputRef.current?.click()
+                  }
                   style={{ cursor: 'pointer' }}
                 >
-                  {previewUrl ? (
+                  {emailPreviewUrl ? (
                     <img
-                      src={previewUrl}
-                      alt="Uploaded certificate screenshot"
+                      src={emailPreviewUrl}
+                      alt="Uploaded certificate email"
+                      className="verify-image-preview"
+                    />
+                  ) : (
+                    <>
+                      <div className="verify-upload-icon">
+                        <Mail size={30} />
+                      </div>
+
+                      <h3>
+                        Upload certificate email
+                      </h3>
+
+                      <p>
+                        Upload the email/screenshot you received
+                        after the certificate was issued.
+                      </p>
+
+                      <span>
+                        PNG, JPG, JPEG or WEBP · Max 10 MB
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <input
+                  ref={emailInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  onChange={handleEmailSelect}
+                  hidden
+                />
+
+                {emailFile && (
+                  <div className="verify-file-info">
+                    <FileImage size={18} />
+
+                    <div>
+                      <strong>{emailFile.name}</strong>
+
+                      <span>
+                        {(emailFile.size / 1024 / 1024).toFixed(2)} MB
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div
+                  className="verify-upload-area"
+                  onClick={() =>
+                    certificateInputRef.current?.click()
+                  }
+                  style={{
+                    cursor: 'pointer',
+                    marginTop: '16px',
+                  }}
+                >
+                  {certificatePreviewUrl ? (
+                    <img
+                      src={certificatePreviewUrl}
+                      alt="Uploaded certificate"
                       className="verify-image-preview"
                     />
                   ) : (
@@ -412,27 +958,43 @@ export default function Verify() {
                       <div className="verify-upload-icon">
                         <Upload size={30} />
                       </div>
-                      <h3>Upload certificate email</h3>
-                      <p>Click here to select the screenshot received after certificate completion.</p>
-                      <span>PNG, JPG, JPEG or WEBP · Max 10 MB</span>
+
+                      <h3>
+                        Upload certificate
+                      </h3>
+
+                      <p>
+                        Upload the actual certificate image that
+                        you want AuthNode to verify.
+                      </p>
+
+                      <span>
+                        PNG, JPG, JPEG or WEBP · Max 10 MB
+                      </span>
                     </>
                   )}
                 </div>
 
                 <input
-                  ref={fileInputRef}
+                  ref={certificateInputRef}
                   type="file"
                   accept="image/png,image/jpeg,image/jpg,image/webp"
-                  onChange={handleFileSelect}
+                  onChange={handleCertificateSelect}
                   hidden
                 />
 
-                {selectedFile && (
+                {certificateFile && (
                   <div className="verify-file-info">
                     <FileImage size={18} />
+
                     <div>
-                      <strong>{selectedFile.name}</strong>
-                      <span>{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                      <strong>
+                        {certificateFile.name}
+                      </strong>
+
+                      <span>
+                        {(certificateFile.size / 1024 / 1024).toFixed(2)} MB
+                      </span>
                     </div>
                   </div>
                 )}
@@ -440,6 +1002,7 @@ export default function Verify() {
                 {error && (
                   <div className="verify-error">
                     <AlertTriangle size={17} />
+
                     <span>{error}</span>
                   </div>
                 )}
@@ -447,21 +1010,31 @@ export default function Verify() {
                 <button
                   type="button"
                   className="btn btn-primary verify-submit"
-                  onClick={readCertificateImage}
-                  disabled={!selectedFile || isProcessing}
+                  onClick={readBothDocuments}
+                  disabled={
+                    !emailFile ||
+                    !certificateFile ||
+                    isProcessing
+                  }
                 >
                   {isProcessing ? (
                     <>
-                      <LoaderCircle size={18} className="spin" />
-                      Reading screenshot {ocrProgress}%
+                      <LoaderCircle
+                        size={18}
+                        className="spin"
+                      />
+
+                      Reading documents {ocrProgress}%
                     </>
                   ) : (
                     <>
                       <ScanLine size={18} />
-                      Scan Certificate Screenshot
+
+                      Read both documents
                     </>
                   )}
                 </button>
+
               </motion.div>
             )}
 
@@ -475,12 +1048,30 @@ export default function Verify() {
               >
                 <motion.div
                   className="scan-line"
-                  animate={{ top: ['10%', '90%', '10%'] }}
-                  transition={{ repeat: Infinity, duration: 1.4, ease: 'easeInOut' }}
+                  animate={{
+                    top: ['10%', '90%', '10%'],
+                  }}
+                  transition={{
+                    repeat: Infinity,
+                    duration: 1.4,
+                    ease: 'easeInOut',
+                  }}
                 />
+
                 <ScanLine size={46} strokeWidth={1.3} />
-                <h3>Reading certificate email</h3>
-                <p>AuthNode OCR is extracting the Certificate ID and student name...</p>
+
+                <h3>
+                  Reading{' '}
+                  {ocrDocument === 'email'
+                    ? 'certificate email'
+                    : 'certificate'}
+                </h3>
+
+                <p>
+                  AuthNode is extracting information from both
+                  uploaded documents.
+                </p>
+
                 <strong>{ocrProgress}%</strong>
               </motion.div>
             )}
@@ -495,67 +1086,111 @@ export default function Verify() {
               >
                 <div className="verify-review-header">
                   <FileImage size={24} />
+
                   <div>
-                    <h2>Information detected</h2>
-                    <p>Review and confirm the information extracted from your screenshot.</p>
+                    <h2>
+                      Two-document information detected
+                    </h2>
+
+                    <p>
+                      AuthNode will compare the email and
+                      certificate before checking the official
+                      database.
+                    </p>
                   </div>
                 </div>
 
                 <div className="verify-detected-grid">
+
+                  <div className="verify-detected-item">
+                    <Mail size={18} />
+
+                    <div>
+                      <span>EMAIL</span>
+                      <strong>
+                        {emailData?.studentEmail ||
+                          'Not detected'}
+                      </strong>
+                    </div>
+                  </div>
+
                   <div className="verify-detected-item">
                     <Hash size={18} />
-                    <div style={{ width: '100%' }}>
+
+                    <div>
+                      <span>EMAIL CERTIFICATE ID</span>
+                      <strong>
+                        {emailData?.certificateId ||
+                          'Not detected'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="verify-detected-item">
+                    <Hash size={18} />
+
+                    <div>
                       <span>CERTIFICATE ID</span>
-                      <input
-                        type="text"
-                        className="form-control"
-                        value={certificateId}
-                        onChange={(e) => setCertificateId(e.target.value)}
-                        placeholder={extractedId || 'e.g. TBI-2026-PTQU-FZ45'}
-                        style={{
-                          marginTop: '4px',
-                          width: '100%',
-                          background: 'rgba(255,255,255,0.05)',
-                          border: '1px solid rgba(255,255,255,0.15)',
-                          borderRadius: '6px',
-                          color: '#fff',
-                          padding: '6px 10px',
-                          fontWeight: 'bold',
-                        }}
-                      />
+                      <strong>
+                        {certificateData?.certificateId ||
+                          'Not detected'}
+                      </strong>
                     </div>
                   </div>
 
                   <div className="verify-detected-item">
                     <User size={18} />
-                    <div style={{ width: '100%' }}>
-                      <span>STUDENT NAME</span>
-                      <input
-                        type="text"
-                        className="form-control"
-                        value={studentName}
-                        onChange={(e) => setStudentName(e.target.value)}
-                        placeholder={extractedName || 'Enter student name from certificate'}
-                        style={{
-                          marginTop: '4px',
-                          width: '100%',
-                          background: 'rgba(255,255,255,0.05)',
-                          border: '1px solid rgba(255,255,255,0.15)',
-                          borderRadius: '6px',
-                          color: '#fff',
-                          padding: '6px 10px',
-                        }}
-                      />
+
+                    <div>
+                      <span>EMAIL NAME</span>
+                      <strong>
+                        {emailData?.studentName ||
+                          'Not detected'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="verify-detected-item">
+                    <User size={18} />
+
+                    <div>
+                      <span>CERTIFICATE NAME</span>
+                      <strong>
+                        {certificateData?.studentName ||
+                          'Not detected'}
+                      </strong>
                     </div>
                   </div>
                 </div>
 
-                {!certificateId && (
-                  <div className="verify-warning">
-                    <AlertTriangle size={17} />
-                    <span>Certificate ID was not detected. Please type it in from the screenshot before verifying.</span>
-                  </div>
-                )}
+                <div
+                  style={{
+                    marginTop: '14px',
+                    padding: '12px 14px',
+                    borderRadius: '8px',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    fontSize: '13px',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <strong>
+                    Final security rule
+                  </strong>
+
+                  <p
+                    style={{
+                      margin: '5px 0 0',
+                      opacity: 0.72,
+                    }}
+                  >
+                    Matching the two images is not enough.
+                    AuthNode will also verify the official
+                    SQLite record, SHA-256 fingerprint and RSA
+                    signature. A failed backend check can never
+                    become VERIFIED.
+                  </p>
+                </div>
 
                 {error && (
                   <div className="verify-error">
@@ -565,25 +1200,39 @@ export default function Verify() {
                 )}
 
                 <div className="verify-actions">
-                  <button type="button" className="btn btn-ghost" onClick={resetVerification} disabled={isVerifying}>
-                    Upload another image
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={resetVerification}
+                    disabled={isVerifying}
+                  >
+                    Upload again
                   </button>
 
                   <button
                     type="button"
                     className="btn btn-primary"
-                    onClick={verifyWithBackend}
-                    disabled={isVerifying || !certificateId}
+                    onClick={verifyDocuments}
+                    disabled={
+                      isVerifying ||
+                      !emailData ||
+                      !certificateData
+                    }
                   >
                     {isVerifying ? (
                       <>
-                        <LoaderCircle size={17} className="spin" />
-                        Verifying with database...
+                        <LoaderCircle
+                          size={17}
+                          className="spin"
+                        />
+
+                        Checking AuthNode...
                       </>
                     ) : (
                       <>
                         <ShieldCheck size={17} />
-                        Verify information
+
+                        Verify both documents
                       </>
                     )}
                   </button>
@@ -595,114 +1244,368 @@ export default function Verify() {
               <motion.div
                 key="result"
                 className={`card verify-result verify-result-${result.status}`}
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
+                initial={{
+                  opacity: 0,
+                  scale: 0.95,
+                }}
+                animate={{
+                  opacity: 1,
+                  scale: 1,
+                }}
                 transition={{ duration: 0.3 }}
               >
-                {/* 1. VERIFIED */}
+
                 {result.status === 'verified' && (
                   <>
-                    <ShieldCheck size={58} strokeWidth={1.4} style={{ color: '#10b981' }} />
-                    <h2>Certificate Verified & Authenticated</h2>
+                    <ShieldCheck
+                      size={58}
+                      strokeWidth={1.4}
+                      style={{ color: '#10b981' }}
+                    />
+
+                    <h2>Certificate Verified</h2>
+
                     <p className="verify-result-sub">
-                      The certificate is authentic. The Certificate ID and cryptographic SHA-256 hash match the official database record.
+                      {result.message}
                     </p>
 
                     <div className="verify-result-details">
                       <div>
                         <span>Certificate ID</span>
-                        <strong>{result.certificate?.id || result.certificateId}</strong>
+
+                        <strong>
+                          {result.certificate?.id ||
+                            result.certificateId}
+                        </strong>
                       </div>
+
                       <div>
-                        <span>Student</span>
-                        <strong>{result.certificate?.student_name || result.studentName}</strong>
+                        <span>Student Name</span>
+
+                        <strong>
+                          {result.certificate?.student_name ||
+                            result.studentName}
+                        </strong>
                       </div>
+
+                      {result.certificate?.student_email && (
+                        <div>
+                          <span>Email</span>
+
+                          <strong>
+                            {result.certificate.student_email}
+                          </strong>
+                        </div>
+                      )}
+
                       {result.certificate?.course && (
                         <div>
                           <span>Course</span>
-                          <strong>{result.certificate.course}</strong>
+
+                          <strong>
+                            {result.certificate.course}
+                          </strong>
                         </div>
                       )}
+
                       {result.certificate?.institution && (
                         <div>
                           <span>Institution</span>
-                          <strong>{result.certificate.institution}</strong>
+
+                          <strong>
+                            {result.certificate.institution}
+                          </strong>
                         </div>
                       )}
+
+                      {result.certificate?.issue_date && (
+                        <div>
+                          <span>Issue Date</span>
+
+                          <strong>
+                            {result.certificate.issue_date}
+                          </strong>
+                        </div>
+                      )}
+
+                      <div>
+                        <span>Verification Status</span>
+
+                        <strong
+                          style={{ color: '#10b981' }}
+                        >
+                          VERIFIED
+                        </strong>
+                      </div>
                     </div>
 
                     <div className="verify-success-note">
                       <CheckCircle2 size={17} />
-                      <span>SHA-256 Hash Authenticated · Cryptographic Integrity Verified</span>
+
+                      <span>
+                        Email Matched · Certificate Matched ·
+                        Database Matched · SHA-256 Authenticated ·
+                        RSA Signature Valid
+                      </span>
                     </div>
 
-                    <div className="verify-actions" style={{ marginTop: '20px', width: '100%' }}>
-                      <button type="button" className="btn btn-ghost" onClick={resetVerification}>
+                    <div
+                      className="verify-actions"
+                      style={{
+                        marginTop: '20px',
+                        width: '100%',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={resetVerification}
+                      >
                         Verify another
                       </button>
-                      <button type="button" className="btn btn-primary verify-again" onClick={continueToRecord}>
+
+                      <button
+                        type="button"
+                        className="btn btn-primary verify-again"
+                        onClick={continueToRecord}
+                      >
                         Continue to Certificate Record
+
                         <ArrowRight size={17} />
                       </button>
                     </div>
                   </>
                 )}
 
-                {/* 2. NOT FOUND */}
+                {[
+                  'document_mismatch',
+                  'email_mismatch',
+                  'course_mismatch',
+                  'institution_mismatch',
+                  'name_mismatch',
+                  'id_mismatch',
+                ].includes(result.status) && (
+                  <>
+                    <ShieldX
+                      size={58}
+                      strokeWidth={1.4}
+                      style={{ color: '#f59e0b' }}
+                    />
+
+                    <h2>
+                      Documents Do Not Match
+                    </h2>
+
+                    <p className="verify-result-sub">
+                      {result.message}
+                    </p>
+
+                    <div className="verify-result-details">
+                      {result.emailCertificateId && (
+                        <div>
+                          <span>Email Certificate ID</span>
+                          <strong>
+                            {result.emailCertificateId}
+                          </strong>
+                        </div>
+                      )}
+
+                      {result.certificateId && (
+                        <div>
+                          <span>Certificate ID</span>
+                          <strong>
+                            {result.certificateId}
+                          </strong>
+                        </div>
+                      )}
+
+                      {result.emailName && (
+                        <div>
+                          <span>Email Name</span>
+                          <strong>
+                            {result.emailName}
+                          </strong>
+                        </div>
+                      )}
+
+                      {result.certificateName && (
+                        <div>
+                          <span>Certificate Name</span>
+                          <strong>
+                            {result.certificateName}
+                          </strong>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost verify-again"
+                      onClick={resetVerification}
+                      style={{ marginTop: '20px' }}
+                    >
+                      Upload correct documents
+                    </button>
+                  </>
+                )}
+
                 {result.status === 'not_found' && (
                   <>
-                    <ShieldX size={58} strokeWidth={1.4} style={{ color: '#ef4444' }} />
-                    <h2>Certificate Not Found</h2>
+                    <ShieldX
+                      size={58}
+                      strokeWidth={1.4}
+                      style={{ color: '#ef4444' }}
+                    />
+
+                    <h2>
+                      Certificate Not Found
+                    </h2>
+
                     <p className="verify-result-sub">
-                      No matching certificate was found in the database with ID: <strong>{result.certificateId}</strong>.
+                      {result.message}
                     </p>
-                    <button type="button" className="btn btn-ghost verify-again" onClick={resetVerification}>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost verify-again"
+                      onClick={resetVerification}
+                    >
                       Try another certificate
                     </button>
                   </>
                 )}
 
-                {/* 3. TAMPERED */}
                 {result.status === 'tampered' && (
                   <>
-                    <ShieldX size={58} strokeWidth={1.4} style={{ color: '#ef4444' }} />
-                    <h2>Cryptographic Integrity Check Failed</h2>
+                    <ShieldX
+                      size={58}
+                      strokeWidth={1.4}
+                      style={{ color: '#ef4444' }}
+                    />
+
+                    <h2>
+                      Certificate Integrity Failed
+                    </h2>
+
                     <p className="verify-result-sub">
-                      The SHA-256 hash does not match the stored certificate record. The certificate details have been tampered with or forged.
+                      {result.message}
                     </p>
-                    <button type="button" className="btn btn-ghost verify-again" onClick={resetVerification}>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost verify-again"
+                      onClick={resetVerification}
+                    >
                       Try another certificate
                     </button>
                   </>
                 )}
 
-                {/* 4. NAME MISMATCH */}
-                {result.status === 'name_mismatch' && (
+                {result.status === 'revoked' && (
                   <>
-                    <ShieldX size={58} strokeWidth={1.4} style={{ color: '#f59e0b' }} />
-                    <h2>Student Name Mismatch</h2>
+                    <ShieldX
+                      size={58}
+                      strokeWidth={1.4}
+                      style={{ color: '#ef4444' }}
+                    />
+
+                    <h2>
+                      Certificate Revoked
+                    </h2>
+
                     <p className="verify-result-sub">
-                      The certificate ID was located, but the student name detected on the screenshot (<strong>{result.providedName || result.studentName}</strong>) does not match the registered recipient (<strong>{result.registeredName || result.certificate?.student_name}</strong>).
+                      {result.message}
                     </p>
-                    <button type="button" className="btn btn-ghost verify-again" onClick={resetVerification}>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost verify-again"
+                      onClick={resetVerification}
+                    >
                       Verify another
                     </button>
                   </>
                 )}
+
+                {result.status === 'ocr_failed' && (
+                  <>
+                    <AlertTriangle
+                      size={58}
+                      strokeWidth={1.4}
+                      style={{ color: '#f59e0b' }}
+                    />
+
+                    <h2>
+                      Unable to Read Documents
+                    </h2>
+
+                    <p className="verify-result-sub">
+                      {result.message}
+                    </p>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost verify-again"
+                      onClick={resetVerification}
+                    >
+                      Upload clearer images
+                    </button>
+                  </>
+                )}
+
+                {result.status === 'network_error' && (
+                  <>
+                    <AlertTriangle
+                      size={58}
+                      strokeWidth={1.4}
+                      style={{ color: '#ef4444' }}
+                    />
+
+                    <h2>
+                      Verification Service Unavailable
+                    </h2>
+
+                    <p className="verify-result-sub">
+                      {result.message}
+                    </p>
+
+                    <button
+                      type="button"
+                      className="btn btn-ghost verify-again"
+                      onClick={() => setStage('review')}
+                    >
+                      Retry verification
+                    </button>
+                  </>
+                )}
+
               </motion.div>
             )}
+
           </AnimatePresence>
         </div>
 
         <div className="verify-security-note">
           <ShieldQuestion size={20} />
+
           <div>
-            <strong>How this verification works</strong>
+            <strong>
+              How AuthNode verifies your certificate
+            </strong>
+
             <p>
-              AuthNode reads the uploaded screenshot using Tesseract OCR, sends the extracted ID and name to the backend, and validates it against the database and SHA-256 cryptographic proof to ensure complete integrity.
+              AuthNode OCRs the certificate email and the
+              certificate separately. Their Certificate IDs and
+              student identity are compared first. The backend
+              then checks the official SQLite record, recomputes
+              the SHA-256 certificate fingerprint and verifies the
+              institution RSA signature. Only after every required
+              check passes is the official certificate record
+              allowed to continue to the Certificate Record page.
             </p>
           </div>
         </div>
+
       </div>
     </div>
   )
