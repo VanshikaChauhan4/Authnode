@@ -14,8 +14,9 @@ BASE_DIR = Path(__file__).resolve().parent
 VECTOR_DB_PATH = Path(os.getenv("VECTOR_DB_PATH", str(BASE_DIR / "chroma_db")))
 DATA_DIR = BASE_DIR / "data"
 
-MODEL_NAME = os.getenv("MODEL_NAME", "llama3.1:8b")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+MODEL_NAME = os.getenv("OLLAMA_MODEL", os.getenv("MODEL_NAME", "llama3.1:8b"))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 PORT = int(os.getenv("PORT", "8000"))
 

@@ -177,6 +177,12 @@ export default function Issue() {
 
                 <span className="hash-chip">{issued.hash}</span>
 
+                <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 10, background: 'rgba(201,162,39,0.07)', border: '1px solid rgba(201,162,39,0.2)', color: '#e8c158', fontSize: '0.82rem', lineHeight: 1.5 }}>
+                  {issued.blockchain_tx_hash
+                    ? `Registered on ${issued.blockchain_network || 'configured blockchain'} · Transaction: ${issued.blockchain_tx_hash}`
+                    : 'RSA-signed local certificate created. Blockchain is not configured, so no on-chain transaction has been recorded.'}
+                </div>
+
                 <div className={`fraud-banner ${risk.className}`}>
                   <risk.icon size={17} />
                   <span>{risk.label}</span>

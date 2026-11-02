@@ -10,7 +10,7 @@ from __future__ import annotations
 
 INTENT_KEYWORDS: dict[str, list[str]] = {
     "certificate_generation": ["issue", "generate", "create certificate", "how do i get my certificate"],
-    "certificate_verification": ["verify", "verification", "check certificate", "authentic", "valid"],
+    "certificate_verification": ["verify", "verification", "check certificate", "authentic", "valid", "revoked", "certificate status"],
     "student_help": ["student", "dashboard", "my certificate", "download"],
     "institute_help": ["institute", "institution", "issuing institution", "registrar"],
     "verifier_help": ["employer", "recruiter", "company", "verifier", "hiring"],
@@ -30,6 +30,7 @@ INTENT_TO_CATEGORY: dict[str, str] = {
     "institute_help": "institute_help",
     "verifier_help": "verifier_help",
     "security": "security",
+    "blockchain_explanation": "security",
     "authnode_overview": "authnode_overview",
     "troubleshooting": "troubleshooting",
     "chatbot_scope": "chatbot_scope",

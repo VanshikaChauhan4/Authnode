@@ -11,13 +11,14 @@ Architecture:
     Query rewriting (uses conversation history for follow-ups)
          |
          v
-    Retriever (Chroma, filtered by detected intent where possible)
+    Hybrid retrieval (Chroma semantic + BM25 keyword, RRF)
          |
          v
     Relevance gate  -- below threshold --> polite out-of-domain redirect
          |
          v (above threshold)
-    LLM (Ollama, local) grounded on retrieved AuthNode documentation
+    Read-only live verification tools for certificate IDs, or
+    explanation tools + local LLM grounded on retrieved documentation
          |
          v
     Answer + source citations + sessionId
@@ -26,6 +27,8 @@ Architecture:
 from __future__ import annotations
 
 import uuid
+import re
+import json
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +37,11 @@ from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import ChatOllama
+from langchain_community.retrievers import BM25Retriever
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pathlib import Path
+from ingest import DOC_METADATA
 from pydantic import BaseModel, Field, model_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -42,6 +50,7 @@ from slowapi.util import get_remote_address
 import config
 import memory
 from intent import INTENT_TO_CATEGORY, detect_intent
+from tools import (verify_certificate, get_certificate_status, explain_blockchain_verification, explain_sha256, explain_digital_signature, explain_certificate_security)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -92,7 +101,7 @@ fingerprints or RSA signatures) only if it's relevant or asked for.
 - When explaining a multi-step workflow, use numbered steps.
 - When explaining WHY AuthNode uses something (like a fingerprint or a signature), explain \
 the reasoning, not just the definition.
-- Never claim AuthNode is completely fraud-proof. It is designed to make unauthorized \
+- When a live certificate tool result is included, repeat its status faithfully; never infer a successful blockchain registration from a local-only result. Never claim AuthNode is completely fraud-proof. It is designed to make unauthorized \
 certificate modification detectable, not to guarantee fraud is impossible.
 - Do not answer questions unrelated to AuthNode. If asked something off-topic, politely \
 say you focus on AuthNode and redirect toward what you can help with.
@@ -115,6 +124,7 @@ PROMPT = ChatPromptTemplate.from_messages(
 
 _retriever = None
 _vectorstore = None
+_bm25_retriever = None
 _llm = None
 _ollama_available: bool | None = None
 
@@ -143,7 +153,7 @@ def get_llm():
         return _llm
 
     try:
-        llm = ChatOllama(model=config.MODEL_NAME, temperature=0.2)
+        llm = ChatOllama(model=config.MODEL_NAME, temperature=0.2, base_url=config.OLLAMA_BASE_URL)
         llm.invoke("ping")
         _ollama_available = True
         _llm = llm
@@ -186,24 +196,59 @@ def rewrite_query(question: str, history: list[dict[str, str]]) -> str:
         return f"{last_user_turns[-1]} {question}"
 
 
+def get_bm25_retriever():
+    """Build a local keyword retriever over the same AuthNode Markdown corpus."""
+    global _bm25_retriever
+    if _bm25_retriever is not None:
+        return _bm25_retriever
+    documents = DirectoryLoader(
+        str(config.DATA_DIR), glob="**/*.md", loader_cls=TextLoader,
+        loader_kwargs={"encoding": "utf-8"},
+    ).load()
+    if not documents:
+        raise RuntimeError("No AuthNode knowledge-base documents found")
+    for doc in documents:
+        filename = Path(doc.metadata.get("source", "")).name
+        doc.metadata.update({"source": filename, **DOC_METADATA.get(filename, {"title": filename, "category": "faq", "audience": "all"})})
+    chunks = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=80).split_documents(documents)
+    _bm25_retriever = BM25Retriever.from_documents(chunks, k=config.RETRIEVAL_K)
+    return _bm25_retriever
+
+
 def retrieve(query: str, intent: str):
-    """Retrieve relevant chunks, softly biased by detected intent category.
-    Falls back to unfiltered search if a category filter returns nothing —
-    a wrong intent guess should degrade gracefully, not empty out results."""
+    """Hybrid semantic + BM25 retrieval fused using Reciprocal Rank Fusion."""
     vectorstore = get_vectorstore()
     category = INTENT_TO_CATEGORY.get(intent)
+    try:
+        semantic_scored = vectorstore.similarity_search_with_relevance_scores(query, k=config.RETRIEVAL_K, filter={"category": category}) if category else vectorstore.similarity_search_with_relevance_scores(query, k=config.RETRIEVAL_K)
+    except Exception:
+        semantic_scored = vectorstore.similarity_search_with_relevance_scores(query, k=config.RETRIEVAL_K)
+    if category and not semantic_scored:
+        semantic_scored = vectorstore.similarity_search_with_relevance_scores(query, k=config.RETRIEVAL_K)
+    semantic = [doc for doc, _score in semantic_scored]
+    retrieve.last_semantic_score = max((score for _doc, score in semantic_scored), default=0.0)
+    try:
+        keyword = get_bm25_retriever().invoke(query)
+        if category:
+            categorized = [doc for doc in keyword if doc.metadata.get("category") == category]
+            if categorized:
+                keyword = categorized
+    except Exception:
+        keyword = []
+    if not keyword:
+        return [(doc, 1.0 / (rank + 1)) for rank, doc in enumerate(semantic)]
 
-    if category:
-        try:
-            results = vectorstore.similarity_search_with_relevance_scores(
-                query, k=config.RETRIEVAL_K, filter={"category": category}
-            )
-            if results:
-                return results
-        except Exception:
-            pass
-
-    return vectorstore.similarity_search_with_relevance_scores(query, k=config.RETRIEVAL_K)
+    # RRF combines rank positions, not incomparable raw model scores.
+    fused = {}
+    docs = {}
+    for ranked in (semantic, keyword):
+        for rank, doc in enumerate(ranked, start=1):
+            key = (doc.metadata.get("source", ""), doc.page_content)
+            docs[key] = doc
+            fused[key] = fused.get(key, 0.0) + 1.0 / (60 + rank)
+    ordered = sorted(fused, key=fused.get, reverse=True)[:config.RETRIEVAL_K]
+    max_score = max((fused[key] for key in ordered), default=1.0)
+    return [(docs[key], fused[key] / max_score) for key in ordered]
 
 
 def build_sources(results) -> list[dict[str, str]]:
@@ -216,6 +261,52 @@ def build_sources(results) -> list[dict[str, str]]:
         seen.add(source)
         sources.append({"title": doc.metadata.get("title", source), "source": source})
     return sources
+
+
+# ---------------------------------------------------------------------------
+# Deterministic tool routing: a certificate ID triggers the live backend tool.
+# This is deliberately safer than asking an LLM to invent or infer a result.
+# ---------------------------------------------------------------------------
+CERTIFICATE_ID_PATTERN = re.compile(r"\bCERT[-_ ]?[A-Z0-9]{3,30}\b|\b[a-fA-F0-9]{12}\b", re.IGNORECASE)
+
+def find_certificate_id(question: str) -> str | None:
+    match = CERTIFICATE_ID_PATTERN.search(question)
+    if not match:
+        return None
+    candidate = match.group(0).replace(" ", "").replace("_", "-")
+    if candidate.lower() in {"sha256", "blockchain", "authnode", "student", "issuer", "certificate", "certificates"}:
+        return None
+    return candidate
+
+
+def format_live_verification(result: dict) -> str:
+    status = str(result.get("verification_status", "unknown")).lower()
+    labels = {
+        "verified": "passed the available cryptographic verification checks",
+        "revoked": "is revoked",
+        "tampered": "failed integrity verification (the fingerprint or signature did not match)",
+        "not_found": "was not found in AuthNode's certificate records",
+        "name_mismatch": "did not pass the supplied identity-name check",
+        "verification_error": "could not be verified because the backend service was unavailable",
+        "not_registered": "is not registered on the configured blockchain",
+        "signature_invalid": "has a missing or invalid issuer RSA signature",
+        "not_found": "was not found in AuthNode's certificate records",
+    }
+    summary = labels.get(status, f"returned status: {status}")
+    details = []
+    if result.get("blockchain_transaction"):
+        details.append(f"Blockchain transaction: {result['blockchain_transaction']} ({result.get('blockchain_network') or 'network not specified'}).")
+    elif status == "verified":
+        details.append("No blockchain transaction is recorded in this certificate response; this result must not be described as an on-chain verification.")
+    if result.get("registered_on_blockchain") is False and result.get("blockchain_enabled") is False:
+        details.append("Blockchain integration is not enabled on this backend; this is not an on-chain verification.")
+    elif result.get("registered_on_blockchain") is True:
+        details.append("The certificate has an on-chain registration.")
+    if result.get("certificate_hash"):
+        details.append(f"SHA-256 fingerprint: {result['certificate_hash']}.")
+    if result.get("issuer"):
+        details.append(f"Issuer: {result['issuer']}.")
+    return f"Certificate {result.get('certificate_id', '')} {summary}. " + " ".join(details)
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +374,28 @@ def chat(request: Request, body: ChatRequest):
     session_id = body.sessionId or str(uuid.uuid4())
     history = memory.get_history(session_id)
 
+    # Live certificate verification takes precedence over generative retrieval.
+    certificate_id = find_certificate_id(question)
+    if certificate_id:
+        if any(word in question.lower() for word in ("revoke", "revoked", "status")):
+            live_result = get_certificate_status.invoke({"certificate_id": certificate_id})
+            live_result = {
+                **live_result,
+                "verification_status": str(live_result.get("status", "unknown")).lower(),
+                "certificate_hash": live_result.get("sha256"),
+                "blockchain_transaction": live_result.get("transaction_hash"),
+                "blockchain_network": live_result.get("blockchain_network"),
+                "issuer": live_result.get("issuer"),
+            }
+        else:
+            live_result = verify_certificate.invoke({"certificate_id": certificate_id})
+        answer = format_live_verification(live_result)
+        if live_result.get("verification_status") == "verification_error":
+            answer = f"I could not complete live verification for {certificate_id}. {live_result.get('error', 'The AuthNode backend did not respond.') } No genuine/invalid conclusion can be made."
+        memory.append_turn(session_id, "user", question)
+        memory.append_turn(session_id, "assistant", answer)
+        return ChatResponse(answer=answer, sources=[SourceItem(title="Live AuthNode verification", source="backend API")], sessionId=session_id)
+
     try:
         retrieval_query = rewrite_query(question, history)
         intent = detect_intent(question)
@@ -292,7 +405,18 @@ def chat(request: Request, body: ChatRequest):
             status_code=503, detail="The chatbot service is temporarily unavailable."
         )
 
-    best_score = max((score for _doc, score in results), default=0.0)
+    best_score = getattr(retrieve, "last_semantic_score", 0.0)
+
+    explanation = None
+    q_lower = question.lower()
+    if any(term in q_lower for term in ("sha-256", "sha256", "hash")):
+        explanation = explain_sha256.invoke({})
+    elif any(term in q_lower for term in ("rsa", "digital signature", "signature")):
+        explanation = explain_digital_signature.invoke({})
+    elif "blockchain" in q_lower or "ethereum" in q_lower or "sepolia" in q_lower:
+        explanation = explain_blockchain_verification.invoke({})
+    elif any(term in q_lower for term in ("security", "tamper", "fraud")):
+        explanation = explain_certificate_security.invoke({})
 
     if not results or best_score < config.RELEVANCE_THRESHOLD:
         answer = OUT_OF_DOMAIN_REPLY if not results or best_score <= 0 else NO_INFO_REPLY
@@ -301,6 +425,8 @@ def chat(request: Request, body: ChatRequest):
         return ChatResponse(answer=answer, sources=[], sessionId=session_id)
 
     context = "\n\n---\n\n".join(doc.page_content for doc, _score in results)
+    if explanation:
+        context = "Read-only AuthNode explanation tool result (supporting context):\n" + str(explanation) + "\n\n" + context
     sources = build_sources(results)
 
     llm = get_llm()

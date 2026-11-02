@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
 
-DB_PATH = Path(__file__).resolve().parent.parent / "authnode.db"
+_DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "authnode.db"
+_DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if _DATABASE_URL.startswith("sqlite:///"):
+    _db_target = _DATABASE_URL[len("sqlite:///"):]
+    _db_path = Path(_db_target)
+    DB_PATH = _db_path if _db_path.is_absolute() else Path(__file__).resolve().parent.parent / _db_path
+else:
+    DB_PATH = _DEFAULT_DB_PATH
 
 
 def init_db() -> None:
@@ -103,6 +111,9 @@ def init_db() -> None:
         # =====================================================
 
         migrate_legacy_schema(conn)
+        # Legacy records with no transaction hash are local RSA/SHA-256 records,
+        # not confirmed blockchain registrations.
+        conn.execute("UPDATE certificates SET verification_type = 'LOCAL_CRYPTOGRAPHIC' WHERE blockchain_tx_hash IS NULL AND verification_type = 'BLOCKCHAIN_NATIVE'")
 
         # =====================================================
         # CREATE INDEXES ONLY AFTER MIGRATION

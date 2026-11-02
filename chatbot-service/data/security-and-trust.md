@@ -1,50 +1,31 @@
-# Security and trust — how AuthNode actually works today
+# Security and trust — how AuthNode works
 
-## The two mechanisms doing the work
+## SHA-256 canonical certificate fingerprint
 
-**1. Cryptographic fingerprinting (SHA-256).**
-Every certificate's student name, course, institution, and issue date are combined
-into one string and hashed with SHA-256. Think of it like a tamper-evident seal:
-change even a single character in the underlying details, and the resulting
-fingerprint is completely different, with no way to predict how. This makes silent
-edits mathematically obvious rather than a matter of trust.
+AuthNode builds a fixed-order canonical string from the certificate's student name, lowercase student email, course, certificate title, institution ID, institution name, and issue date. Values are trimmed, UTF-8 encoded, and hashed with SHA-256. New issuance rejects the `|` delimiter inside fields because the current compatible canonical format uses it as a field separator.
 
-**2. Digital signatures (RSA).**
-When an institution's account is created, AuthNode generates an RSA key pair for it.
-Every certificate the institution issues has its fingerprint signed with the
-institution's private key (RSA-PSS with SHA-256). During verification, AuthNode checks
-that signature against the institution's public key. This proves the certificate
-really was issued by that institution, and hasn't been re-signed by someone else.
+SHA-256 is an integrity fingerprint, not encryption. A change to any canonical field changes the digest.
 
-Together, these two mechanisms mean a certificate can prove both **"I haven't been
-changed"** and **"I really came from this institution"** — without anyone needing to
-phone the registrar's office to ask.
+## RSA digital signature
 
-## Is blockchain involved?
+When an institution account is created, AuthNode generates an RSA key pair. The institution's private key signs the SHA-256 fingerprint using RSA-PSS with SHA-256. Verification checks the signature using the institution's public key. Newly generated private keys are encrypted at rest with Fernet; production must provide a secure `AUTHNODE_KEY_ENCRYPTION_KEY`. Legacy database rows created before this change may still contain plaintext private keys and should be migrated/rotated.
 
-**Not in the current version.** AuthNode's certificate records, fingerprints, and
-signatures are stored in a local SQLite database, not on a public blockchain. A
-blockchain-anchored ledger and decentralized file storage (e.g. IPFS) are listed as
-possible future directions, but they are not part of how the system works today. If
-you're asking whether verification currently depends on a blockchain network — it
-doesn't; it depends on the SHA-256 fingerprint and RSA signature described above.
+## Optional Ethereum blockchain anchoring
+
+AuthNode now includes a Solidity `AuthNode.sol` contract and an ethers.js integration. When the operator deploys the contract and sets `BLOCKCHAIN_ENABLED=true`, certificate issuance submits the SHA-256 fingerprint, certificate ID, and issuer wallet address to the configured EVM network (Sepolia by default). The contract supports issuer authorization, duplicate prevention, verification, and issuer-only revocation. The backend stores the returned transaction hash and network in SQLite.
+
+When blockchain configuration is absent or disabled, AuthNode performs local SQLite + SHA-256 + RSA verification only. It must not claim a certificate is on-chain verified. If the configured RPC or contract is unavailable, verification fails closed and reports that verification could not be completed.
+
+Only certificate ID, hash, issuer wallet, timestamps and lifecycle status are stored on chain. Full PDFs and student personal data are not placed on the public ledger. The current API bridge uses one configured transaction signer; a production multi-institution deployment needs per-institution wallet binding and key custody.
+
+## PDF hashing trade-off
+
+The uploaded PDF receives a separate raw-file SHA-256 audit digest. It is not compared with the canonical certificate-data digest because re-exporting, metadata edits, or scanning change PDF bytes. The certificate ID is used to retrieve and verify the canonical record. This avoids false negatives from harmless PDF re-exports, but does not prove the uploaded PDF's visual appearance is identical to the issued artifact. A future signed embedded payload/QR reference can bind the displayed PDF to its signed data.
 
 ## Is IPFS involved?
 
-**No, not currently.** AuthNode does not store certificate PDFs on IPFS today —
-certificate details are stored directly in AuthNode's own database. If IPFS-based
-storage is added in the future, this document will be updated to reflect it.
-
-## Why fingerprint + signature instead of "just a database record"?
-
-A plain database record can be edited by anyone with access to the database, and
-nothing about the record itself would reveal that it happened. A fingerprint tied to a
-digital signature means an edited record no longer matches what was originally signed
-— the inconsistency is detectable by recomputing the fingerprint and checking the
-signature, which is exactly what happens every time someone verifies a certificate.
+No. AuthNode does not currently store certificate PDFs on IPFS.
 
 ## Is AuthNode 100% fraud-proof?
 
-No system can honestly claim that, and AuthNode doesn't. What it's designed to do is
-make unauthorized modification of a certificate's details detectable, rather than
-relying on the certificate simply looking legitimate.
+No system can honestly claim that. AuthNode is designed to make unauthorized modification of canonical certificate details detectable. Verification results come from cryptographic checks and the configured backend/chain—not an AI prediction.

@@ -65,71 +65,59 @@ function namesMatch(nameA, nameB) {
 }
 
 function preprocessOcrText(rawText = '') {
-  let text = String(rawText || '')
+  let text = String(rawText || '').replace(/\r/g, '')
 
+  // OCR commonly separates the final certificate-ID segment from an
+  // "ID" label, e.g. "TBI-2026-PTQU-\nID FZ45". Join the actual
+  // suffix, not the label, before running the ID recognizers.
   text = text.replace(
-    /([A-Za-z0-9]+-)\s*[\r\n]+\s*([A-Za-z0-9]+)/g,
+    /\b([A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){1,5}-)\s*\n\s*ID\s+([A-Z0-9]{2,})\b/gi,
     '$1$2'
   )
 
-  return text
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\r/g, '')
+  // Join IDs that are genuinely wrapped at a hyphen.
+  text = text.replace(
+    /([A-Za-z0-9]+-)\s*\n\s*([A-Za-z0-9]+)/g,
+    '$1$2'
+  )
+
+  return text.replace(/[ \t]+/g, ' ')
 }
 
 function extractCertificateId(rawText = '') {
   const text = preprocessOcrText(rawText)
-
   if (!text) return ''
 
-  const explicitPatterns = [
-    /certificate\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{6,})/i,
-    /cert\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{6,})/i,
-    /certificate\s*#\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{6,})/i,
-    /credential\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9_-]{6,40})/i,
-    /verification\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Za-z0-9_-]{6,40})/i,
+  const patterns = [
+    // Explicit certificate labels (including OCR's line breaks).
+    /certificate\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Z0-9]+(?:-[A-Z0-9]+){1,5})/i,
+    /certificate\s+([A-Z0-9]+(?:-[A-Z0-9]+){1,5})/i,
+    /cert\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Z0-9]+(?:-[A-Z0-9]+){1,5})/i,
+    /credential\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Z0-9_-]{6,40})/i,
+    /verification\s*(?:id|no|number|code)\s*[:#-]?\s*([A-Z0-9_-]{6,40})/i,
   ]
 
-  for (const pattern of explicitPatterns) {
+  for (const pattern of patterns) {
     const match = text.match(pattern)
-
     if (match?.[1]) {
-      const candidate = match[1]
-        .replace(/[|_*]/g, '')
-        .trim()
-
-      if (
-        candidate.length >= 6 &&
-        !/^(intern|details|verification|name|role|click)$/i.test(
-          candidate
-        )
-      ) {
+      const candidate = match[1].replace(/[|_*]/g, '').trim()
+      if (candidate.length >= 6 &&
+          !/^(intern|student|employee|user|details|verification|name|role|click)$/i.test(candidate)) {
         return candidate
       }
     }
   }
 
-  const multiSegmentMatches = text.match(
-    /\b([A-Z0-9]{2,10}(?:-[A-Z0-9]{2,12}){2,5})\b/gi
-  )
-
-  if (multiSegmentMatches?.length) {
-    for (const candidate of multiSegmentMatches) {
-      if (
-        !/^(intern|student|employee|user)[-_ ]?id/i.test(
-          candidate
-        )
-      ) {
-        return candidate.trim()
-      }
+  // Fallback for documents that show a multi-part ID without a label.
+  const candidates = text.match(/\b([A-Z0-9]{2,10}(?:-[A-Z0-9]{2,12}){1,5})\b/gi) || []
+  for (const candidate of candidates) {
+    if (/^(?:TBI|CERT|CERTIFICATE)-/i.test(candidate) ||
+        /^[A-Z]{2,10}-[0-9A-Z]{4,20}(?:-[0-9A-Z]{2,20})*$/i.test(candidate)) {
+      return candidate.trim()
     }
   }
 
-  const fallback = text.match(
-    /\b([A-Z]{2,10}-[0-9A-Z]{4,20}(?:-[0-9A-Z]{2,20})*)\b/i
-  )
-
-  return fallback?.[1]?.trim() || ''
+  return ''
 }
 
 function cleanName(value = '') {
@@ -160,7 +148,6 @@ function isReasonableName(value = '') {
 
 function extractStudentName(rawText = '') {
   const text = preprocessOcrText(rawText)
-
   if (!text) return ''
 
   const patterns = [
@@ -174,45 +161,40 @@ function extractStudentName(rawText = '') {
 
   for (const pattern of patterns) {
     const match = text.match(pattern)
-
     if (match?.[1]) {
       const candidate = cleanName(match[1])
+      if (isReasonableName(candidate)) return candidate
+    }
+  }
 
-      if (isReasonableName(candidate)) {
-        return candidate
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+
+  // OCR may split the label into "INTERN", "NAME", and the value on
+  // three separate lines, or insert a stray glyph: "INTERN 4 NAME".
+  for (let i = 0; i < lines.length; i += 1) {
+    const labelWindow = lines.slice(i, i + 2).join(' ')
+    if (/\b(?:intern|student|candidate|recipient|learner|participant)\b[\s|4Il]*\bname\b/i.test(labelWindow)) {
+      const nameLabel = /\bname\b/i.exec(labelWindow)
+      const sameLineValue = nameLabel
+        ? cleanName(labelWindow.slice(nameLabel.index + nameLabel[0].length))
+        : ''
+      if (isReasonableName(sameLineValue)) return sameLineValue
+
+      for (let offset = 1; offset <= 3; offset += 1) {
+        const rawCandidate = lines[i + offset] || ''
+        const candidate = cleanName(rawCandidate.replace(/^name\b\s*[:\-]?/i, ''))
+        if (isReasonableName(candidate)) return candidate
       }
     }
   }
 
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const current = lines[i]
-
-    if (
-      /(?:intern|student|candidate|recipient|learner|participant)\s*name/i.test(
-        current
-      )
-    ) {
-      const sameLine = cleanName(
-        current.replace(
-          /.*?(?:intern|student|candidate|recipient|learner|participant)\s*name\s*[:\-]?\s*/i,
-          ''
-        )
-      )
-
-      if (isReasonableName(sameLine)) {
-        return sameLine
-      }
-
-      const nextLine = cleanName(lines[i + 1] || '')
-
-      if (isReasonableName(nextLine)) {
-        return nextLine
-      }
+  // Certificate layouts often put the recipient name on the line directly
+  // after "This is to certify that".
+  const certifyIndex = lines.findIndex((line) => /this\s+(?:is\s+to\s+)?certif(?:y|ies)\s+that/i.test(line))
+  if (certifyIndex >= 0) {
+    for (let offset = 1; offset <= 3; offset += 1) {
+      const candidate = cleanName(lines[certifyIndex + offset] || '')
+      if (isReasonableName(candidate)) return candidate
     }
   }
 
@@ -274,7 +256,7 @@ function extractInstitution(rawText = '') {
   return ''
 }
 
-async function runOcr(file, onProgress) {
+async function runOcr(file, onProgress, pageSegMode = '11') {
   let worker = null
 
   try {
@@ -291,6 +273,7 @@ async function runOcr(file, onProgress) {
 
     await worker.setParameters({
       preserve_interword_spaces: '1',
+      tessedit_pageseg_mode: pageSegMode,
     })
 
     const recognition = await worker.recognize(file)
@@ -334,11 +317,14 @@ export default function Verify() {
 
   const emailInputRef = useRef(null)
   const certificateInputRef = useRef(null)
+  const pdfInputRef = useRef(null)
 
   const [stage, setStage] = useState('upload')
 
   const [emailFile, setEmailFile] = useState(null)
   const [certificateFile, setCertificateFile] = useState(null)
+  const [pdfFile, setPdfFile] = useState(null)
+  const [pdfCertificateId, setPdfCertificateId] = useState(idFromRoute || '')
 
   const [emailPreviewUrl, setEmailPreviewUrl] = useState('')
   const [certificatePreviewUrl, setCertificatePreviewUrl] = useState('')
@@ -466,7 +452,8 @@ export default function Verify() {
         emailFile,
         (progress) => {
           setOcrProgress(Math.round(progress * 0.5))
-        }
+        },
+        '11'
       )
 
       const parsedEmail = parseEmailDocument(emailText)
@@ -480,7 +467,8 @@ export default function Verify() {
         certificateFile,
         (progress) => {
           setOcrProgress(50 + Math.round(progress * 0.5))
-        }
+        },
+        '3'
       )
 
       const parsedCertificate =
@@ -645,6 +633,8 @@ export default function Verify() {
             data.message ||
             'Certificate verified successfully.',
           checks: data.checks || {},
+          blockchainEnabled: data.checks?.blockchainEnabled,
+          blockchainRegistered: data.checks?.blockchainRegistered,
           emailData,
           certificateData,
         })
@@ -687,6 +677,47 @@ export default function Verify() {
       })
 
       setStage('result')
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
+  async function verifyPdfCertificate() {
+    if (!pdfCertificateId.trim() || !pdfFile) {
+      setError('Enter the certificate ID and choose a PDF file.')
+      return
+    }
+    if (pdfFile.type !== 'application/pdf' || pdfFile.size > 10 * 1024 * 1024) {
+      setError('Choose a PDF file up to 10 MB.')
+      return
+    }
+    setError('')
+    setIsVerifying(true)
+    const formData = new FormData()
+    formData.append('cert_id', pdfCertificateId.trim())
+    formData.append('file', pdfFile)
+    try {
+      const response = await fetch(`${API_BASE}/certificates/verify`, {
+        method: 'POST', credentials: 'include', body: formData,
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.detail || `Verification failed (${response.status})`)
+      const status = data.verification_status || 'network_error'
+      setResult({
+        status,
+        certificate: data.certificate,
+        certificateId: data.certificate_id,
+        message: status === 'verified'
+          ? 'The certificate record passed the configured cryptographic checks. See blockchain evidence below; a local-only result is not an on-chain registration.'
+          : `Certificate verification returned: ${status}.`,
+        uploadedPdfSha256: data.uploaded_pdf_sha256,
+        pdfHashSemantics: data.pdf_hash_semantics,
+        blockchainEnabled: data.blockchain_enabled,
+        blockchainRegistered: data.blockchain_registered,
+      })
+      setStage('result')
+    } catch (err) {
+      setError(err.message || 'Could not verify the PDF.')
     } finally {
       setIsVerifying(false)
     }
@@ -738,10 +769,20 @@ export default function Verify() {
           certificateHash:
             certificate.hash || '',
 
+          blockchainTxHash:
+            certificate.blockchain_tx_hash || '',
+
+          blockchainNetwork:
+            certificate.blockchain_network || '',
+
+          blockchainTimestamp:
+            certificate.blockchain_timestamp || '',
+
           status: 'VERIFIED',
 
-          verificationType:
-            'TWO_DOCUMENT_OCR_SHA256_RSA_DATABASE',
+          verificationType: result.uploadedPdfSha256
+            ? 'PDF_RECORD_SHA256_RSA_VERIFICATION'
+            : 'TWO_DOCUMENT_OCR_SHA256_RSA_DATABASE',
 
           verifiedAt: new Date().toISOString(),
 
@@ -783,6 +824,8 @@ export default function Verify() {
 
     setEmailFile(null)
     setCertificateFile(null)
+    setPdfFile(null)
+    setPdfCertificateId(idFromRoute || '')
 
     setEmailPreviewUrl('')
     setCertificatePreviewUrl('')
@@ -808,6 +851,9 @@ export default function Verify() {
 
     if (certificateInputRef.current) {
       certificateInputRef.current.value = ''
+    }
+    if (pdfInputRef.current) {
+      pdfInputRef.current.value = ''
     }
   }
 
@@ -837,10 +883,10 @@ export default function Verify() {
           <h1>Verify your certificate</h1>
 
           <p>
-            Upload both the certificate email and the certificate
-            image. AuthNode compares both documents, checks the
-            official SQLite record, and verifies cryptographic
-            integrity before allowing the certificate to continue.
+            Verify with a certificate ID and PDF, or use the existing
+            email-and-certificate image comparison workflow. AuthNode
+            checks the official record, RSA signature and blockchain
+            status when a network is configured.
           </p>
         </div>
 
@@ -857,7 +903,28 @@ export default function Verify() {
               >
 
                 <div className="form-group">
-                  <label>Certificate ID (optional)</label>
+                  <label>Certificate ID</label>
+                  <input
+                    value={pdfCertificateId}
+                    onChange={(event) => setPdfCertificateId(event.target.value)}
+                    placeholder="Enter the certificate ID"
+                  />
+                </div>
+
+                <div className="verify-upload-area" onClick={() => pdfInputRef.current?.click()} style={{ cursor: 'pointer', minHeight: 150 }}>
+                  <div className="verify-upload-icon"><Upload size={28} /></div>
+                  <h3>{pdfFile ? pdfFile.name : 'Verify a certificate PDF'}</h3>
+                  <p>Upload a PDF and provide its certificate ID. AuthNode checks the official record, RSA signature and configured blockchain state.</p>
+                  <span>PDF · Max 10 MB</span>
+                </div>
+                <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => setPdfFile(event.target.files?.[0] || null)} />
+                <button type="button" className="btn btn-primary verify-submit" onClick={verifyPdfCertificate} disabled={!pdfFile || !pdfCertificateId.trim() || isVerifying}>
+                  {isVerifying ? <><LoaderCircle size={18} className="spin" /> Verifying PDF...</> : <>Verify PDF <ArrowRight size={17} /></>}
+                </button>
+                <p className="verify-security-note" style={{ marginBottom: 24 }}>The uploaded PDF gets a separate audit SHA-256. The certificate's canonical-data hash is what is signed and anchored; re-exporting or scanning a PDF changes its raw file hash.</p>
+
+                <div className="form-group">
+                  <label>Or verify using the existing email + certificate image workflow</label>
 
                   <input
                     value={idFromRoute || ''}
@@ -1327,6 +1394,28 @@ export default function Verify() {
                           </strong>
                         </div>
                       )}
+                      <div>
+                        <span>Blockchain Registration</span>
+                        <strong>{result.blockchainRegistered === true ? 'Registered and verified' : result.blockchainEnabled === false || result.blockchainRegistered === false ? 'Not enabled / not registered' : result.certificate?.blockchain_tx_hash ? 'Transaction recorded' : 'Not confirmed by this response'}</strong>
+                      </div>
+                      {result.certificate?.blockchain_network && (
+                        <div>
+                          <span>Blockchain Network</span>
+                          <strong>{result.certificate.blockchain_network}</strong>
+                        </div>
+                      )}
+                      {result.certificate?.blockchain_tx_hash && (
+                        <div>
+                          <span>Blockchain Transaction</span>
+                          <strong style={{ wordBreak: 'break-all' }}>{result.certificate.blockchain_tx_hash}</strong>
+                        </div>
+                      )}
+                      {result.uploadedPdfSha256 && (
+                        <div>
+                          <span>Uploaded PDF SHA-256 (audit only)</span>
+                          <strong style={{ wordBreak: 'break-all' }}>{result.uploadedPdfSha256}</strong>
+                        </div>
+                      )}
 
                       <div>
                         <span>Verification Status</span>
@@ -1343,9 +1432,9 @@ export default function Verify() {
                       <CheckCircle2 size={17} />
 
                       <span>
-                        Email Matched · Certificate Matched ·
-                        Database Matched · SHA-256 Authenticated ·
-                        RSA Signature Valid
+                        {result.uploadedPdfSha256
+                          ? 'Official certificate record checked · SHA-256 fingerprint validated · RSA signature valid'
+                          : 'Email Matched · Certificate Matched · Database Matched · SHA-256 Authenticated · RSA Signature Valid'}
                       </span>
                     </div>
 
@@ -1449,6 +1538,15 @@ export default function Verify() {
                   </>
                 )}
 
+                {result.status === 'not_registered' && (
+                  <>
+                    <ShieldQuestion size={58} strokeWidth={1.4} style={{ color: '#f59e0b' }} />
+                    <h2>Not Registered on Blockchain</h2>
+                    <p className="verify-result-sub">The local certificate record exists, but no matching blockchain registration was found. It cannot be described as on-chain verified.</p>
+                    <button type="button" className="btn btn-ghost verify-again" onClick={resetVerification}>Try another certificate</button>
+                  </>
+                )}
+
                 {result.status === 'not_found' && (
                   <>
                     <ShieldX
@@ -1475,7 +1573,7 @@ export default function Verify() {
                   </>
                 )}
 
-                {result.status === 'tampered' && (
+                {['tampered', 'signature_invalid'].includes(result.status) && (
                   <>
                     <ShieldX
                       size={58}
@@ -1484,7 +1582,7 @@ export default function Verify() {
                     />
 
                     <h2>
-                      Certificate Integrity Failed
+                      {result.status === 'signature_invalid' ? 'Issuer Signature Invalid' : 'Certificate Integrity Failed'}
                     </h2>
 
                     <p className="verify-result-sub">
@@ -1553,7 +1651,7 @@ export default function Verify() {
                   </>
                 )}
 
-                {result.status === 'network_error' && (
+                {['network_error', 'verification_error'].includes(result.status) && (
                   <>
                     <AlertTriangle
                       size={58}

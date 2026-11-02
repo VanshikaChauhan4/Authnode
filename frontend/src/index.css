@@ -153,3 +153,41 @@ input, select, textarea {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ============================================
+   PICTURE-RAIL GALLERY (credential wall)
+   shadcn-style tokens mapped to the AuthNode dark palette.
+   --rail-*   : "R G B" channels (Tailwind alpha support)
+   --color-*  : full colours (used inside color-mix() by the component)
+   ============================================ */
+:root {
+  --rail-background: 3 7 18;
+  --rail-foreground: 237 233 254;
+  --rail-card: 14 11 32;
+  --rail-card-foreground: 237 233 254;
+  --rail-muted: 20 16 42;
+  --rail-muted-foreground: 148 143 178;
+  --rail-border: 52 46 84;
+  --rail-ring: 167 139 250;
+  --rail-chart-2: 52 211 153;
+
+  --color-background: rgb(var(--rail-background));
+  --color-foreground: rgb(var(--rail-foreground));
+  --color-card: rgb(var(--rail-card));
+  --color-card-foreground: rgb(var(--rail-card-foreground));
+  --color-muted: rgb(var(--rail-muted));
+  --color-muted-foreground: rgb(var(--rail-muted-foreground));
+  --color-border: rgb(var(--rail-border));
+  --color-ring: rgb(var(--rail-ring));
+  --color-chart-2: rgb(var(--rail-chart-2));
+}
+
+/* Tailwind preflight is disabled project-wide, so give the gallery the few
+   resets it relies on (borders need a style; lists need no bullets). */
+[data-slot="picture-rail-gallery"] .border,
+[role="dialog"][aria-labelledby$="detail-title"] .border { border-style: solid; }
+[data-slot="picture-rail-gallery"] .border-t,
+[role="dialog"][aria-labelledby$="detail-title"] .border-t { border-top-style: solid; }
+[data-slot="picture-rail-gallery"] ul,
+[role="dialog"][aria-labelledby$="detail-title"] ul { list-style: none; }
+[data-slot="picture-rail-gallery"] button { font: inherit; }

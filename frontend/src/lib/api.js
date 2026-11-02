@@ -211,6 +211,22 @@ async function downloadRequest(
 export const api = {
 
   // ==========================================================
+  // CERTIFICATE BLOCKCHAIN HELPERS
+  // ==========================================================
+
+  certificateStatus: async (certificateId) => request(`/certificates/${encodeURIComponent(certificateId)}/status`),
+  revokeCertificate: async (certificateId) => request(`/certificates/${encodeURIComponent(certificateId)}/revoke`, { method: 'POST' }),
+  verifyCertificatePdf: async (certificateId, file) => {
+    const form = new FormData()
+    form.append('cert_id', certificateId)
+    form.append('file', file)
+    const response = await fetch(`${API_BASE}/certificates/verify`, { method: 'POST', credentials: 'include', body: form })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || `Verification failed (${response.status})`)
+    return data
+  },
+
+  // ==========================================================
   // AUTHENTICATION
   // ==========================================================
 

@@ -126,10 +126,10 @@ const CertificateRecord = ({
   ============================================================
   */
 
+  const hasBlockchainProof = Boolean(certificate.blockchainTxHash);
   const isVerified =
     certificate.status?.toLowerCase() === "verified" ||
-    certificate.status?.toLowerCase() === "active" ||
-    Boolean(certificate.blockchainTxHash);
+    hasBlockchainProof;
 
   return (
     <>
@@ -209,15 +209,19 @@ const CertificateRecord = ({
 
             <div className="certificate-verified-content">
               <strong>
-                {isVerified
-                  ? "Certificate Successfully Verified"
-                  : "Certificate Verification Pending"}
+                {hasBlockchainProof
+                  ? "Certificate Anchored on Blockchain"
+                  : isVerified
+                    ? "Certificate Cryptographically Verified"
+                    : "Certificate Record Issued"}
               </strong>
 
               <p>
-                {isVerified
-                  ? "This certificate record has been authenticated and anchored to the blockchain."
-                  : "This certificate record has been created but blockchain verification is still pending."}
+                {hasBlockchainProof
+                  ? "This certificate record has a blockchain transaction reference."
+                  : isVerified
+                    ? "Local SHA-256 and RSA checks passed. No blockchain transaction is recorded, so this is not an on-chain verification."
+                    : "This certificate record is stored and RSA-signed locally. Blockchain registration has not been confirmed."}
               </p>
             </div>
 
@@ -227,7 +231,7 @@ const CertificateRecord = ({
               }`}
             >
               <span />
-              {isVerified ? "VERIFIED" : "PENDING"}
+              {hasBlockchainProof ? "ON-CHAIN" : isVerified ? "LOCAL VERIFIED" : "ISSUED"}
             </div>
           </div>
 
@@ -435,9 +439,9 @@ const CertificateRecord = ({
                 </div>
               </div>
 
-              <span className="blockchain-live-badge">
+              <span className="blockchain-live-badge" style={!hasBlockchainProof ? { opacity: 0.65 } : undefined}>
                 <span />
-                ON-CHAIN
+                {hasBlockchainProof ? "ON-CHAIN" : "NOT ON-CHAIN"}
               </span>
             </div>
 
@@ -446,14 +450,14 @@ const CertificateRecord = ({
               <div className="blockchain-detail">
                 <span>Network</span>
                 <strong>
-                  {certificate.blockchainNetwork || "Not available"}
+                  {certificate.blockchainNetwork || "Not registered"}
                 </strong>
               </div>
 
               <div className="blockchain-detail">
                 <span>Verification Type</span>
                 <strong>
-                  {certificate.verificationType || "Blockchain"}
+                  {certificate.verificationType || "SHA-256 + RSA"}
                 </strong>
               </div>
 

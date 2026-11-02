@@ -66,7 +66,7 @@ class IssueCertificateRequest(BaseModel):
     verification_type: str = Field(
         default="BLOCKCHAIN_NATIVE",
         pattern=(
-            r"^(BLOCKCHAIN_NATIVE|"
+            r"^(BLOCKCHAIN_NATIVE|LOCAL_CRYPTOGRAPHIC|"
             r"EXTERNAL_VERIFIED|"
             r"EXTERNAL_PENDING)$"
         )

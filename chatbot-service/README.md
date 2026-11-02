@@ -6,8 +6,9 @@ documentation — not general knowledge, and never invented functionality.
 
 ## What it does
 
-- Retrieves relevant AuthNode documentation for each question (RAG, not a hardcoded
-  prompt)
+- Retrieves relevant AuthNode documentation using semantic Chroma search + BM25 keyword search, fused with Reciprocal Rank Fusion (RRF)
+- Calls read-only AuthNode backend tools for live certificate verification and status when a certificate ID is present in the question
+- Uses explanation tools for SHA-256, RSA signatures, blockchain verification and security concepts
 - Runs entirely free/local: HuggingFace `sentence-transformers` for embeddings, Ollama
   for the LLM, Chroma for the vector store — no API keys, no cost
 - Remembers conversation history per session and rewrites follow-up questions
@@ -61,24 +62,21 @@ retrieval biasing.
 | `student-guide.md` | Student workflow: finding, sharing certificates |
 | `institute-guide.md` | Institution workflow: issuing, what's stored |
 | `verifier-guide.md` | Employer/verifier workflow |
-| `security-and-trust.md` | SHA-256 fingerprinting, RSA signatures, honest note on blockchain/IPFS (not currently used) |
+| `security-and-trust.md` | SHA-256, RSA, optional blockchain anchoring, PDF hash trade-offs |
+| `blockchain-architecture.md` | Smart contract, issuer authorization, privacy and backend integration |
 | `authnode-benefits.md` | Why AuthNode vs. a plain PDF |
 | `faq.md` | Common questions |
 | `troubleshooting.md` | Common verification issues |
 | `chatbot-scope.md` | What this assistant can/can't help with |
 | `roadmap.md` | What's in this demo vs. planned |
 
-**Important:** this documentation describes AuthNode's *actual current implementation*
-(SQLite + SHA-256 + RSA signatures). It deliberately does **not** claim blockchain or
-IPFS are in use today, since they aren't — they're listed in `roadmap.md` as future
-work. If you add blockchain/IPFS support later, update `security-and-trust.md` and
-`roadmap.md` to match, and re-run ingestion.
+**Important:** blockchain is implemented as an optional integration in this source bundle. It is only active after the operator deploys/authorizes the contract and sets `BLOCKCHAIN_ENABLED=true`. Without that configuration, the backend performs local SQLite + SHA-256 + RSA verification and must not claim on-chain status. IPFS is not implemented. Re-run `python ingest.py` after editing knowledge-base documents.
 
 ## Environment variables
 
 Copy `.env.example` to `.env` and adjust as needed. Nothing is hardcoded — see that
 file for every variable and what it controls (model name, vector store path, CORS
-origins, retrieval settings, rate limit).
+origins, retrieval settings, rate limit, Ollama URL/model, and the AuthNode API URL).
 
 ## Installation
 
@@ -176,8 +174,9 @@ questions fall below it and real AuthNode questions clear it.
 - No API keys are used or hardcoded (Ollama and embeddings both run locally).
 - Message length is capped (2000 chars) via Pydantic validation.
 - Rate limited per IP (`RATE_LIMIT` in `.env`, default 20/minute).
-- The system prompt explicitly instructs the model to ignore in-message attempts to
-  override its instructions or reveal internal configuration.
+- Certificate verification tools are read-only and query the live AuthNode API; the assistant cannot issue or revoke certificates.
+- A certificate ID triggers deterministic backend verification. A backend failure is reported as inconclusive rather than genuine.
+- The system prompt explicitly instructs the model to ignore in-message attempts to override its instructions or reveal internal configuration.
 - All unhandled errors return a generic message — no stack traces reach the client.
 
 ## Future improvements
@@ -185,5 +184,6 @@ questions fall below it and real AuthNode questions clear it.
 - Swap the in-memory session store for Redis if this needs to run across multiple
   processes/instances.
 - Add streaming responses for a more responsive UI.
-- If blockchain/IPFS support is added to AuthNode itself, update the knowledge base
-  and re-ingest.
+- Add per-institution wallet binding and transaction signing before production multi-institution use.
+- Add optional PDF embedded signed payload/QR verification for stronger binding between displayed PDF content and the canonical record.
+- IPFS is not currently implemented.

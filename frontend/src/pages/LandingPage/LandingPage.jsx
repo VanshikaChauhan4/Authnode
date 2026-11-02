@@ -1,6 +1,8 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import ScrollTriggeredVideoHero from "../../components/ui/scroll-triggered-video-hero";
+import CredentialWall from "../../components/CredentialWall";
 
 import {
   ArrowRight,
@@ -8,7 +10,6 @@ import {
   Award,
   Building2,
   CheckCircle2,
-  ChevronDown,
   Clock3,
   FileCheck2,
   Fingerprint,
@@ -18,7 +19,6 @@ import {
   KeyRound,
   Landmark,
   Link2,
-  LockKeyhole,
   QrCode,
   ScanSearch,
   ShieldCheck,
@@ -1807,170 +1807,13 @@ export default function LandingPage() {
   };
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#030712] text-white">
+    <main className="min-h-screen overflow-x-clip bg-[#030712] text-white">
 
       {/* ======================================================
-          HERO
+          CINEMATIC BLOCKCHAIN HERO
       ====================================================== */}
 
-      <section className="relative min-h-[760px] overflow-hidden border-b border-white/[0.07] lg:min-h-[820px]">
-        <AnimatedAetherBackground />
-
-        <div className="pointer-events-none absolute right-[6%] top-[14%] z-[1] h-80 w-80 rounded-full bg-purple-500/[0.05] blur-[120px]" />
-
-        <div className="pointer-events-none absolute bottom-[8%] left-[24%] z-[1] h-72 w-72 rounded-full bg-indigo-500/[0.04] blur-[120px]" />
-
-        <div className="relative z-10 mx-auto flex min-h-[760px] max-w-7xl items-center px-6 py-32 lg:min-h-[820px] lg:px-8">
-          <div className="grid w-full items-center gap-16 lg:grid-cols-[1.05fr_.95fr]">
-
-            <motion.div
-              initial="hidden"
-              animate="visible"
-              variants={staggerContainer}
-              className="max-w-3xl"
-            >
-              <motion.div
-                variants={fadeUp}
-                transition={{
-                  duration: 0.6,
-                }}
-                className="mb-7 inline-flex items-center gap-2 rounded-full border border-purple-400/15 bg-purple-400/[0.05] px-4 py-2 backdrop-blur-xl"
-              >
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute h-full w-full animate-ping rounded-full bg-purple-400 opacity-50" />
-
-                  <span className="relative h-2 w-2 rounded-full bg-purple-400 shadow-[0_0_12px_rgba(168,85,247,.7)]" />
-                </span>
-
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-purple-200/75">
-                  Blockchain verified credentials
-                </span>
-              </motion.div>
-
-              <motion.h1
-                variants={fadeUp}
-                transition={{
-                  duration: 0.7,
-                }}
-                className="text-balance text-5xl font-medium leading-[0.97] tracking-[-0.045em] sm:text-6xl lg:text-[76px]"
-              >
-                Certificates
-
-                <span className="block text-white/40">
-                  backed by
-                </span>
-
-                <span className="relative inline-block text-purple-300">
-                  proof.
-
-                  <span className="absolute -bottom-2 left-0 h-px w-full bg-gradient-to-r from-purple-300 to-transparent" />
-                </span>
-              </motion.h1>
-
-              <motion.p
-                variants={fadeUp}
-                transition={{
-                  duration: 0.7,
-                }}
-                className="mt-8 max-w-xl text-base leading-7 text-white/45 sm:text-lg"
-              >
-                AuthNode transforms academic and
-                professional certificates into
-                tamper-evident digital credentials
-                backed by cryptographic proof and
-                blockchain verification.
-              </motion.p>
-
-              <motion.div
-                variants={fadeUp}
-                transition={{
-                  duration: 0.7,
-                }}
-                className="mt-9 flex flex-wrap gap-3"
-              >
-                <motion.button
-                  onClick={() =>
-                    navigate("/auth")
-                  }
-                  whileHover={{
-                    y: -2,
-                  }}
-                  whileTap={{
-                    scale: 0.98,
-                  }}
-                  className="group flex items-center gap-3 rounded-xl bg-purple-300 px-5 py-3.5 text-sm font-semibold text-[#031018] shadow-[0_0_35px_rgba(168,85,247,.16)] transition hover:bg-purple-200"
-                >
-                  Get started
-
-                  <ArrowRight
-                    size={17}
-                    className="transition-transform group-hover:translate-x-1"
-                  />
-                </motion.button>
-
-                <motion.button
-                  onClick={() =>
-                    navigate("/verify")
-                  }
-                  whileHover={{
-                    y: -2,
-                  }}
-                  whileTap={{
-                    scale: 0.98,
-                  }}
-                  className="flex items-center gap-3 rounded-xl border border-purple-400/15 bg-white/[0.035] px-5 py-3.5 text-sm font-medium text-white backdrop-blur-xl transition hover:border-purple-300/30 hover:bg-purple-400/[0.05]"
-                >
-                  <ScanSearch size={17} />
-
-                  Verify a certificate
-                </motion.button>
-              </motion.div>
-
-              <motion.div
-                variants={fadeUp}
-                transition={{
-                  duration: 0.7,
-                }}
-                className="mt-12 flex max-w-xl items-start gap-4 border-l border-purple-400/25 pl-5"
-              >
-                <LockKeyhole
-                  size={17}
-                  className="mt-1 shrink-0 text-purple-300/70"
-                />
-
-                <p className="text-xs leading-6 text-white/30">
-                  <span className="text-white/55">
-                    One certificate. One fingerprint.
-                    One verifiable proof.
-                  </span>{" "}
-
-                  Alter the credential and the
-                  cryptographic fingerprint no longer
-                  matches.
-                </p>
-              </motion.div>
-            </motion.div>
-
-            <div className="hidden justify-end lg:flex">
-              <BlockchainStatusCard />
-            </div>
-          </div>
-        </div>
-
-        <a
-          href="#about"
-          className="absolute bottom-7 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center gap-2 text-white/25 transition hover:text-purple-300/60"
-        >
-          <span className="font-mono text-[9px] uppercase tracking-[0.2em]">
-            Explore
-          </span>
-
-          <ChevronDown
-            size={15}
-            className="animate-bounce"
-          />
-        </a>
-      </section>
+      <ScrollTriggeredVideoHero />
 
       {/* ======================================================
           TRUST
@@ -2339,6 +2182,12 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* ======================================================
+          CREDENTIAL WALL (picture-rail gallery)
+      ====================================================== */}
+
+      <CredentialWall />
 
       {/* ======================================================
           ROLES

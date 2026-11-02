@@ -51,6 +51,11 @@ DOC_METADATA: dict[str, dict[str, str]] = {
         "category": "security",
         "audience": "all",
     },
+    "blockchain-architecture.md": {
+        "title": "Blockchain Architecture",
+        "category": "security",
+        "audience": "all",
+    },
     "authnode-benefits.md": {
         "title": "Why AuthNode",
         "category": "authnode_overview",
@@ -109,6 +114,7 @@ def ingest() -> None:
         documents=chunks,
         embedding=embeddings,
         persist_directory=str(CHROMA_DIR),
+        collection_metadata={"hnsw:space": "cosine"},
     )
     print(f"Ingested {len(chunks)} chunks from {len(documents)} documents into {CHROMA_DIR}")
 

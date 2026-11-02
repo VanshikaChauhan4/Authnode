@@ -1,38 +1,26 @@
 # How AuthNode verifies a certificate
 
-Anyone can verify a certificate on the Verify page — no account or sign-in required.
+AuthNode supports two frontend flows: certificate ID + PDF upload, and the existing email-image + certificate-image comparison flow.
 
-## What you need
+## Verification steps
 
-Either:
-- The **Certificate ID** (a short code, shared as text or inside a QR code), or
-- A scan of the **QR code** itself, which contains the Certificate ID.
+1. The user supplies the Certificate ID and may upload a PDF. The PDF must be no larger than 10 MB and pass the basic PDF header/type checks.
+2. AuthNode looks up the official SQLite record and institution public key.
+3. The backend rebuilds the canonical certificate string from the stored fields and recomputes its SHA-256 fingerprint.
+4. The backend verifies the institution's RSA-PSS signature. Missing or invalid signatures do not pass.
+5. If blockchain is enabled, the backend reads the smart contract and checks registration, hash match, issuer and revocation status. RPC failure is an inconclusive verification error, never a success.
+6. The API returns the actual backend result. The RAG assistant can call the same read-only verification/status APIs when a Certificate ID is mentioned.
 
-## What happens during verification
+## Possible results
 
-1. You submit the Certificate ID (by pasting it or scanning the QR code).
-2. AuthNode looks up the certificate record with that ID.
-3. AuthNode recomputes the fingerprint from the stored student name, course,
-   institution, and issue date, and compares it to the fingerprint saved at issuance.
-4. AuthNode checks the issuing institution's digital signature on that fingerprint,
-   using the institution's public key.
-5. AuthNode returns one of three results.
+- **Verified** — Local canonical hash and RSA signature checks passed; if blockchain is enabled, the on-chain registration, hash and revocation checks also passed.
+- **Not found** — The Certificate ID does not exist in AuthNode's local certificate records.
+- **Not registered** — A local record exists, but the configured blockchain has no matching registration.
+- **Tampered** — The canonical SHA-256 fingerprint does not match the stored/on-chain fingerprint.
+- **Signature invalid** — The issuer public key/signature is missing or the RSA signature check failed.
+- **Revoked** — The certificate has been revoked locally or on chain.
+- **Verification error** — The backend, RPC provider or contract could not complete the required check. No genuine conclusion can be made.
 
-## The three possible results
+## PDF fingerprint note
 
-- **Verified** — A matching record exists, the recomputed fingerprint matches the
-  stored one, and the institution's signature checks out. The certificate has not been
-  altered since it was issued.
-- **Not found** — No certificate in the system matches that ID. This usually means a
-  typo in the ID, or the certificate was never issued through AuthNode.
-- **Does not match / tampered** — A record exists, but either the fingerprint no longer
-  matches (the underlying details were changed) or the signature doesn't check out.
-  Treat a certificate in this state as unverified.
-
-## Why this can't be faked
-
-The fingerprint depends on the exact certificate details, and the signature depends on
-the institution's private key, which only the institution holds. Someone editing a
-certificate's details after issuance — even changing one letter of the course name —
-would produce a fingerprint that no longer matches the signed one. There's no way to
-edit the visible details without breaking the underlying proof.
+The uploaded PDF's raw-byte SHA-256 is returned as a separate audit value. It is not compared with the canonical certificate-data hash. Re-exporting, scanning, or changing PDF metadata changes raw bytes even if the certificate details are unchanged. AuthNode verifies the official canonical record using the Certificate ID; this upload endpoint does not prove that arbitrary PDF artwork is byte-for-byte identical to an issued file.
