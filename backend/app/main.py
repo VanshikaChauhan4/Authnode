@@ -1368,6 +1368,30 @@ async def verify_two_documents(request: Request):
 #     (matched by email, with name only as a fallback for legacy rows)
 # ============================================================
 
+@app.get("/api/verifications/history")
+def teacher_verification_history(user=Depends(get_current_user)):
+    """Return persistent verification attempts for the signed-in teacher account."""
+    if user["role"] != "institution":
+        raise HTTPException(status_code=403, detail="Teacher account required")
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT id, certificate_id, status, reason, message, checks_json,
+                      extracted_json, fingerprint, attempts, verified_at
+               FROM verifications WHERE user_id = ?
+               ORDER BY verified_at DESC LIMIT 50""",
+            (user["id"],),
+        ).fetchall()
+    return {"items": [
+        {"id": r["id"], "certificate_id": r["certificate_id"], "status": r["status"],
+         "reason": r["reason"], "message": r["message"],
+         "checks": json.loads(r["checks_json"] or "{}"),
+         "extracted": json.loads(r["extracted_json"] or "{}"),
+         "fingerprint": r["fingerprint"], "attempts": r["attempts"],
+         "verified_at": r["verified_at"]}
+        for r in rows
+    ]}
+
+
 @app.get("/api/certificates/mine")
 def my_certificates(user=Depends(get_current_user)):
     if user["role"] not in ("student", "employer"):

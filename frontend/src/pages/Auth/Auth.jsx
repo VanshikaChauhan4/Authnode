@@ -6,36 +6,14 @@ import {
 
 import { motion } from 'framer-motion'
 
-import {
-  Building2,
-  GraduationCap,
-  ScanSearch,
-  Eye,
-  EyeOff,
-} from 'lucide-react'
+import { Building2, Eye, EyeOff } from 'lucide-react'
 
 import { useAuth } from '../../context/AuthContext'
 
 import './Auth.css'
 
 
-const ROLES = [
-  {
-    key: 'institution',
-    label: 'Institution',
-    icon: Building2,
-  },
-  {
-    key: 'student',
-    label: 'Student',
-    icon: GraduationCap,
-  },
-  {
-    key: 'employer',
-    label: 'Employer',
-    icon: ScanSearch,
-  },
-]
+const ROLES = [{ key: 'institution', label: 'Teacher', icon: Building2 }]
 
 
 export default function Auth() {
@@ -56,8 +34,7 @@ export default function Auth() {
 
   const [role, setRole] =
     useState(
-      params.get('role') ||
-      'student'
+      'institution'
     )
 
   const [form, setForm] =
@@ -103,7 +80,7 @@ export default function Auth() {
       currentRole ===
       'institution'
     ) {
-      return '/issue'
+      return '/verify'
     }
 
     if (
@@ -302,8 +279,8 @@ export default function Auth() {
             <p>
               {
                 mode === 'login'
-                  ? 'Sign in to your AuthNode account.'
-                  : 'Choose your role, then create your account.'
+                  ? 'Sign in to your teacher verification workspace.'
+                  : 'Create your teacher account to verify student certificates.'
               }
             </p>
 
@@ -373,7 +350,7 @@ export default function Auth() {
                 <label htmlFor="name">
                   {
                     role === 'institution'
-                      ? 'Institution name'
+                      ? 'School / institution name'
                       : 'Your name'
                   }
                 </label>
@@ -529,7 +506,7 @@ export default function Auth() {
                 submitting
                   ? 'Please wait…'
                   : mode === 'signup'
-                    ? `Create ${role} account`
+                    ? `Create teacher account`
                     : 'Sign in'
               }
 

@@ -88,3 +88,17 @@ def test_pdf_content_must_match(client):
     r = client.post("/api/certificates/verify", data={"cert_id": cert["id"]},
                     files={"file": ("c.pdf", b.getvalue(), "application/pdf")}).json()
     assert r["verification_status"] in ("manual_review", "tampered")   # blank PDF never verifies
+
+
+def test_teacher_history_is_persistent_and_private(client):
+    cert = _setup(client)
+    teacher = _signup(client, name="Teacher One", email="teacher@school.edu", role="institution", password="password123")
+    h = {"Authorization": f"Bearer {teacher['token']}"}
+    r = client.post("/api/certificates/verify-documents", json=_docs(cert), headers=h)
+    assert r.status_code == 200 and r.json()["saved"] is True
+    history = client.get("/api/verifications/history", headers=h)
+    assert history.status_code == 200
+    assert history.json()["items"][0]["certificate_id"] == cert["id"]
+    assert history.json()["items"][0]["status"] == "verified"
+    student = _signup(client, name="Student", email="student@school.edu", role="student", password="password123")
+    assert client.get("/api/verifications/history", headers={"Authorization": f"Bearer {student['token']}"}).status_code == 403
