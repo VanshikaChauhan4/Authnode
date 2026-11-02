@@ -1,86 +1,88 @@
-"""Certificate fingerprinting and RSA signing."""
+"""Cryptographic utilities for AuthNode certificate verification."""
 
-from __future__ import annotations
-
-import base64
 import hashlib
-import secrets
+import json
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-
-
-def build_cert_string(
-    *,
-    student_name: str,
-    course: str,
-    institution: str,
-    issue_date: str,
-) -> str:
-    """Canonical string — field order must stay fixed for verification."""
-    return (
-        f"{student_name.strip().lower()}|"
-        f"{course.strip().lower()}|"
-        f"{institution.strip().lower()}|"
-        f"{issue_date}"
-    )
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
 
-def fingerprint(cert_string: str) -> str:
-    return hashlib.sha256(cert_string.encode("utf-8")).hexdigest()
+def canonicalize_certificate(data: dict) -> bytes:
+    """
+    Convert certificate data into a consistent byte representation.
+
+    The same certificate details will always produce the same output,
+    regardless of the order of keys in the input dictionary.
+    """
+    if not isinstance(data, dict):
+        raise TypeError("Certificate data must be a dictionary.")
+
+    fields = {
+        "student_name": "lower",
+        "certificate_id": "upper",
+        "certificate_title": "lower",
+        "course_name": "lower",
+        "institution_name": "lower",
+        "student_email": "lower",
+        "issue_date": "keep",
+        "issuer_name": "lower",
+    }
+
+    canonical_data = {}
+
+    for field, normalization in fields.items():
+        value = str(data.get(field, "")).strip()
+
+        if normalization == "lower":
+            value = value.lower()
+        elif normalization == "upper":
+            value = value.upper()
+
+        canonical_data[field] = value
+
+    return json.dumps(
+        canonical_data,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
 
 
-def cert_id_from_hash(cert_hash: str) -> str:
-    return cert_hash[:12]
+def compute_sha256_hash(data: dict) -> str:
+    """Generate a SHA-256 hash of canonical certificate data."""
+    encoded = canonicalize_certificate(data)
+    return hashlib.sha256(encoded).hexdigest()
 
 
-def generate_keypair() -> tuple[str, str]:
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode("utf-8")
-    public_pem = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("utf-8")
-    return private_pem, public_pem
+def verify_rsa_signature(
+    data: dict,
+    signature_hex: str,
+    public_key,
+) -> bool:
+    """
+    Verify an RSA signature using PKCS#1 v1.5 and SHA-256.
 
-
-def sign_hash(cert_hash: str, private_key_pem: str) -> str:
-    private_key = serialization.load_pem_private_key(
-        private_key_pem.encode("utf-8"),
-        password=None,
-    )
-    signature = private_key.sign(
-        cert_hash.encode("utf-8"),
-        padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH,
-        ),
-        hashes.SHA256(),
-    )
-    return base64.b64encode(signature).decode("ascii")
-
-
-def verify_signature(cert_hash: str, signature_b64: str, public_key_pem: str) -> bool:
+    Returns True if the signature is valid, otherwise False.
+    """
     try:
-        public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
-        signature = base64.b64decode(signature_b64.encode("ascii"))
+        if not isinstance(signature_hex, str) or not signature_hex.strip():
+            return False
+
+        if public_key is None:
+            return False
+
+        encoded = canonicalize_certificate(data)
+        signature = bytes.fromhex(signature_hex.strip())
+
         public_key.verify(
             signature,
-            cert_hash.encode("utf-8"),
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH,
-            ),
+            encoded,
+            padding.PKCS1v15(),
             hashes.SHA256(),
         )
+
         return True
-    except Exception:
+
+    except (InvalidSignature, ValueError, TypeError, AttributeError):
         return False
-
-
-def new_token() -> str:
-    return secrets.token_urlsafe(32)

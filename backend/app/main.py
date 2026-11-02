@@ -45,10 +45,10 @@ from fastapi import (
     File,
     Form,
 )
-
+from .ocr_service import run_ocr
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import crypto_utils, security, blockchain
+from . import crypto_utils, security, blockchain, verification as vf
 
 from .database import (
     get_connection,
@@ -262,13 +262,29 @@ def create_session(
 # GET CURRENT LOGGED-IN USER
 # ============================================================
 
+def _extract_token(request: Request) -> str | None:
+    """Session token from `Authorization: Bearer <token>` or the httpOnly cookie."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        bearer = auth[7:].strip()
+        if bearer:
+            return bearer
+    return request.cookies.get(COOKIE_NAME)
+
+
+def get_optional_user(request: Request):
+    """Like get_current_user but returns None instead of raising."""
+    try:
+        return get_current_user(request)
+    except HTTPException:
+        return None
+
+
 def get_current_user(
     request: Request,
 ):
 
-    token = request.cookies.get(
-        COOKIE_NAME
-    )
+    token = _extract_token(request)
 
 
     if not token:
@@ -304,6 +320,8 @@ def get_current_user(
                 u.id,
 
                 u.name,
+
+                u.email,
 
                 u.role,
 
@@ -367,6 +385,9 @@ def get_current_user(
         "name":
             row["name"],
 
+        "email":
+            row["email"],
+
         "role":
             row["role"],
 
@@ -398,337 +419,148 @@ def health():
 
 
 # ============================================================
+# SIMPLE IN-MEMORY RATE LIMITER (per client IP + bucket)
+# ============================================================
+
+import collections
+import hashlib
+import json
+import threading
+
+_rate_lock = threading.Lock()
+_rate_hits: dict[str, collections.deque] = {}
+
+
+def rate_limit(request: Request, bucket: str, limit: int, window: int = 60) -> None:
+    ip = request.client.host if request.client else "unknown"
+    key = f"{bucket}:{ip}"
+    now = time.time()
+    with _rate_lock:
+        q = _rate_hits.setdefault(key, collections.deque())
+        while q and q[0] < now - window:
+            q.popleft()
+        if len(q) >= limit:
+            raise HTTPException(status_code=429, detail="Too many requests — please wait a minute and try again.")
+        q.append(now)
+
+
+def _session_payload(row, token: str) -> SessionResponse:
+    return SessionResponse(
+        id=row["id"], name=row["name"], email=row["email"], role=row["role"], token=token,
+    )
+
+
+# ============================================================
 # SIGNUP
 # ============================================================
 
-@app.post(
-    "/api/auth/signup",
-
-    response_model=SessionResponse,
-)
-def signup(
-    body: SignupRequest,
-
-    response: Response,
-):
-
-    name = body.name.strip()
-
+@app.post("/api/auth/signup", response_model=SessionResponse)
+def signup(body: SignupRequest, response: Response, request: Request):
+    rate_limit(request, "signup", 10)
+    name = body.name
+    email = body.email
     role = body.role
-
-
-    now = int(
-        time.time() * 1000
-    )
-
-
-    user_id = str(
-        uuid.uuid4()
-    )
-
-
-    password_hash, password_salt = (
-        security.hash_password(
-            body.password
-        )
-    )
-
+    now = int(time.time() * 1000)
+    user_id = str(uuid.uuid4())
+    password_hash, password_salt = security.hash_password(body.password)
 
     private_key = None
-
     public_key = None
-
-
-    # Only institutions get signing keys.
-    #
-    # Institutions are responsible for
-    # cryptographically signing certificates.
     if role == "institution":
-
-        private_key, public_key = (
-            crypto_utils.generate_keypair()
-        )
+        private_key, public_key = crypto_utils.generate_keypair()
         private_key = security.encrypt_private_key(private_key)
 
-
     with get_connection() as conn:
-
-        existing = conn.execute(
-
-            """
-            SELECT id
-
-            FROM users
-
-            WHERE lower(name) = lower(?)
-
-            AND role = ?
-            """,
-
-            (
-                name,
-                role,
-            ),
-
-        ).fetchone()
-
-
-        if existing:
-
+        if email:
+            dup = conn.execute(
+                "SELECT id FROM users WHERE lower(email) = ? AND role = ?", (email, role)
+            ).fetchone()
+        else:
+            dup = conn.execute(
+                "SELECT id FROM users WHERE lower(name) = lower(?) AND role = ? AND email IS NULL",
+                (name, role),
+            ).fetchone()
+        if dup:
             raise HTTPException(
-
                 status_code=409,
-
-                detail=(
-                    "An account with this name "
-                    "and role already exists — "
-                    "sign in instead."
-                ),
+                detail="An account with this email and role already exists — sign in instead.",
             )
-
-
         conn.execute(
-
-            """
-            INSERT INTO users (
-
-                id,
-
-                name,
-
-                role,
-
-                password_hash,
-
-                password_salt,
-
-                public_key,
-
-                private_key,
-
-                created_at
-
-            )
-
-            VALUES (
-                ?, ?, ?, ?, ?,
-                ?, ?, ?
-            )
-            """,
-
-            (
-
-                user_id,
-
-                name,
-
-                role,
-
-                password_hash,
-
-                password_salt,
-
-                public_key,
-
-                private_key,
-
-                now,
-
-            ),
+            """INSERT INTO users (id, name, email, role, password_hash, password_salt,
+                                  public_key, private_key, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, name, email, role, password_hash, password_salt, public_key, private_key, now),
         )
 
-
-    token = create_session(
-        user_id
-    )
-
-
-    set_session_cookie(
-        response,
-        token,
-    )
-
-
-    return SessionResponse(
-
-        name=name,
-
-        role=role,
-    )
+    token = create_session(user_id)
+    set_session_cookie(response, token)
+    return SessionResponse(id=user_id, name=name, email=email, role=role, token=token)
 
 
 # ============================================================
-# LOGIN
+# LOGIN  (email OR name)
 # ============================================================
 
-@app.post(
-    "/api/auth/login",
-
-    response_model=SessionResponse,
-)
-def login(
-    body: LoginRequest,
-
-    response: Response,
-):
-
-    name = body.name.strip()
-
+@app.post("/api/auth/login", response_model=SessionResponse)
+def login(body: LoginRequest, response: Response, request: Request):
+    rate_limit(request, "login", 20)
     role = body.role
 
-
     with get_connection() as conn:
+        rows = []
+        if body.email:
+            rows = conn.execute(
+                "SELECT * FROM users WHERE lower(email) = ? AND role = ?", (body.email, role)
+            ).fetchall()
+        if not rows and body.name:
+            rows = conn.execute(
+                "SELECT * FROM users WHERE lower(name) = lower(?) AND role = ?", (body.name, role)
+            ).fetchall()
+        # Legacy accounts (created before emails existed) can still sign in by
+        # typing their old name into the email box.
+        if not rows and body.email:
+            rows = conn.execute(
+                "SELECT * FROM users WHERE lower(name) = lower(?) AND role = ?", (body.email, role)
+            ).fetchall()
 
-        row = conn.execute(
+    if not rows:
+        raise HTTPException(status_code=404, detail="No account found for that email and role — create one first.")
 
-            """
-            SELECT
-
-                id,
-
-                name,
-
-                role,
-
-                password_hash,
-
-                password_salt
-
-            FROM users
-
-            WHERE lower(name) = lower(?)
-
-            AND role = ?
-
-            """,
-
-            (
-                name,
-                role,
-            ),
-
-        ).fetchone()
-
-
-    if not row:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail=(
-                "No account found with "
-                "that name and role — "
-                "create one first."
-            ),
-        )
-
-
-    password_ok = (
-        security.verify_password(
-
-            body.password,
-
-            row["password_hash"],
-
-            row["password_salt"],
-        )
+    row = next(
+        (r for r in rows if security.verify_password(body.password, r["password_hash"], r["password_salt"])),
+        None,
     )
+    if row is None:
+        raise HTTPException(status_code=401, detail="Incorrect password")
 
-
-    if not password_ok:
-
-        raise HTTPException(
-
-            status_code=401,
-
-            detail="Incorrect password",
-        )
-
-
-    token = create_session(
-        row["id"]
-    )
-
-
-    set_session_cookie(
-        response,
-        token,
-    )
-
-
-    return SessionResponse(
-
-        name=row["name"],
-
-        role=row["role"],
-    )
+    token = create_session(row["id"])
+    set_session_cookie(response, token)
+    return _session_payload(row, token)
 
 
 # ============================================================
 # LOGOUT
 # ============================================================
 
-@app.post(
-    "/api/auth/logout"
-)
-def logout(
-    response: Response,
-
-    request: Request,
-):
-
-    token = request.cookies.get(
-        COOKIE_NAME
-    )
-
-
+@app.post("/api/auth/logout")
+def logout(response: Response, request: Request):
+    token = _extract_token(request)
     if token:
-
         with get_connection() as conn:
-
-            conn.execute(
-
-                """
-                DELETE FROM sessions
-                WHERE token = ?
-                """,
-
-                (token,),
-            )
-
-
-    clear_session_cookie(
-        response
-    )
-
-
-    return {
-
-        "ok": True,
-    }
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    clear_session_cookie(response)
+    return {"ok": True}
 
 
 # ============================================================
-# CURRENT SESSION
+# CURRENT SESSION  (/auth/session and /auth/me are the same)
 # ============================================================
 
-@app.get(
-    "/api/auth/session",
-
-    response_model=SessionResponse,
-)
-def session(
-    user=Depends(
-        get_current_user
-    ),
-):
-
+@app.get("/api/auth/session", response_model=SessionResponse)
+@app.get("/api/auth/me", response_model=SessionResponse)
+def session(user=Depends(get_current_user)):
     return SessionResponse(
-
-        name=user["name"],
-
-        role=user["role"],
+        id=user["id"], name=user["name"], email=user.get("email"), role=user["role"], token=user["token"],
     )
 
 
@@ -1281,344 +1113,318 @@ def _cryptographically_verify_row(row):
     return "verified"
 
 
+def _clean(d: dict, key: str) -> str:
+    return str(d.get(key) or "").strip()
+
+
+def _save_verification(user, *, certificate_id, status, reason, message, checks, extracted, fingerprint):
+    """Persist an attempt for a logged-in user. Verified results are upserted
+    (one row per user+certificate) so re-checking never creates duplicates."""
+    if not user:
+        return False
+    now = int(time.time() * 1000)
+    with get_connection() as conn:
+        if status == "verified" and certificate_id:
+            cur = conn.execute(
+                """UPDATE verifications SET attempts = attempts + 1, verified_at = ?, message = ?,
+                          checks_json = ?, extracted_json = ?, fingerprint = ?
+                   WHERE user_id = ? AND certificate_id = ? AND status = 'verified'""",
+                (now, message, json.dumps(checks), json.dumps(extracted), fingerprint, user["id"], certificate_id),
+            )
+            if cur.rowcount:
+                return True
+        conn.execute(
+            """INSERT INTO verifications (user_id, certificate_id, status, reason, message,
+                      checks_json, extracted_json, fingerprint, verified_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user["id"], certificate_id, status, reason, message,
+             json.dumps(checks), json.dumps(extracted), fingerprint, now),
+        )
+    return True
+
+
 @app.post("/api/certificates/verify-documents")
 async def verify_two_documents(request: Request):
-    """
-    Final verification flow:
+    """Verify a certificate using OCR data from the certificate image + email image.
 
-    email image OCR
-          +
-    certificate image OCR
-          ↓
-    document-to-document comparison
-          ↓
-    SQLite certificate lookup
-          ↓
-    SHA-256 verification
-          ↓
-    RSA signature verification
-          ↓
-    verified / rejected
+    Pipeline
+      1. both documents must expose the same Certificate ID (OCR-tolerant)
+      2. student name must agree across both documents (strict token match)
+      3. look the ID up in the official database
+      4. certificate fields + email address must match the official record
+      5. SHA-256 re-computation + RSA issuer signature
+      6. blockchain registration / revocation (when enabled)
+      7. result is saved to the signed-in student's verification history
+
+    Statuses: verified | document_mismatch | name_mismatch | email_mismatch |
+    course_mismatch | institution_mismatch | not_found | tampered |
+    signature_invalid | revoked | not_registered | manual_review |
+    verification_error
     """
+    rate_limit(request, "verify", 40)
+    user = get_optional_user(request)
 
     try:
         body = await request.json()
     except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON verification request",
-        )
+        raise HTTPException(status_code=400, detail="Invalid JSON verification request")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid verification request")
 
     email_data = body.get("email") or {}
-    certificate_data = body.get("certificate") or {}
+    cert_data = body.get("certificate") or {}
+    if not isinstance(email_data, dict) or not isinstance(cert_data, dict):
+        raise HTTPException(status_code=400, detail="Invalid verification request")
 
-    email_id = str(email_data.get("certificateId") or "").strip()
-    certificate_id = str(
-        certificate_data.get("certificateId") or ""
-    ).strip()
+    extracted = {"email": email_data, "certificate": cert_data}
+    fingerprint = hashlib.sha256(
+        json.dumps(extracted, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
 
-    email_name = str(email_data.get("studentName") or "").strip()
-    certificate_name = str(
-        certificate_data.get("studentName") or ""
-    ).strip()
+    email_id, cert_id = _clean(email_data, "certificateId"), _clean(cert_data, "certificateId")
+    email_name, cert_name = _clean(email_data, "studentName"), _clean(cert_data, "studentName")
+    email_addr = _clean(email_data, "studentEmail").lower()
+    cert_email = _clean(cert_data, "studentEmail").lower()
+    email_course, cert_course = _clean(email_data, "course"), _clean(cert_data, "course")
+    email_inst, cert_inst = _clean(email_data, "institution"), _clean(cert_data, "institution")
 
-    email_address = str(
-        email_data.get("studentEmail") or ""
-    ).strip().lower()
+    checks: dict = {"emailAuthenticity": "not_verified"}
 
-    email_course = str(
-        email_data.get("course") or ""
-    ).strip()
+    def finish(status, message, reason=None, certificate=None, cert_id_value=None, **extra):
+        saved = _save_verification(
+            user, certificate_id=cert_id_value, status=status, reason=reason, message=message,
+            checks=checks, extracted=extracted, fingerprint=fingerprint,
+        )
+        out = {"status": status, "message": message, "checks": checks, "saved": bool(saved)}
+        if reason:
+            out["reason"] = reason
+        if certificate is not None:
+            out["certificate"] = certificate
+            out["certificateId"] = certificate.id if hasattr(certificate, "id") else cert_id_value
+        elif cert_id:
+            out["certificateId"] = cert_id
+        out.update(extra)
+        return out
 
-    certificate_course = str(
-        certificate_data.get("course") or ""
-    ).strip()
+    # ---- 1. OCR completeness: a failed read is NOT a mismatch -------------------------
+    missing = [
+        label for label, val in (
+            ("certificate ID (certificate)", cert_id), ("certificate ID (email)", email_id),
+            ("student name (certificate)", cert_name), ("student name (email)", email_name),
+            ("student email (email)", email_addr),
+        ) if not val
+    ]
+    if missing:
+        return finish(
+            "manual_review",
+            "Some fields could not be read from the images: " + ", ".join(missing)
+            + ". Correct them manually or upload clearer images.",
+            reason="ocr_incomplete", missingFields=missing,
+        )
 
-    email_institution = str(
-        email_data.get("institution") or ""
-    ).strip()
+    # ---- 2. document-to-document ------------------------------------------------------
+    checks["emailCertificateIdMatch"] = vf.compare_ids(email_id, cert_id) == vf.MATCH
+    if not checks["emailCertificateIdMatch"]:
+        return finish(
+            "document_mismatch",
+            "The Certificate ID in the email does not match the ID on the certificate image.",
+            reason="certificate_id_mismatch", emailCertificateId=email_id, certificateId=cert_id,
+        )
+    checks["emailCertificateNameMatch"] = vf.compare_names(email_name, cert_name) == vf.MATCH
+    if not checks["emailCertificateNameMatch"]:
+        return finish(
+            "document_mismatch",
+            "The student name in the email does not match the name on the certificate image.",
+            reason="student_name_mismatch", emailName=email_name, certificateName=cert_name,
+        )
+    for label, a, b, fn in (("course", email_course, cert_course, vf.compare_phrase),
+                            ("institution", email_inst, cert_inst, vf.compare_phrase)):
+        if fn(a, b) == vf.MISMATCH:
+            return finish(
+                "document_mismatch",
+                f"The {label} in the email does not match the certificate image.",
+                reason=f"{label}_mismatch",
+            )
 
-    certificate_institution = str(
-        certificate_data.get("institution") or ""
-    ).strip()
-
-    # --------------------------------------------------------
-    # Required OCR data
-    # --------------------------------------------------------
-
-    if not email_id:
-        return {
-            "status": "document_mismatch",
-            "reason": "email_certificate_id_missing",
-            "message": (
-                "The certificate ID could not be read from "
-                "the certificate email."
-            ),
-        }
-
-    if not certificate_id:
-        return {
-            "status": "document_mismatch",
-            "reason": "certificate_id_missing",
-            "message": (
-                "The certificate ID could not be read from "
-                "the certificate image."
-            ),
-        }
-
-    if not email_name:
-        return {
-            "status": "document_mismatch",
-            "reason": "email_name_missing",
-            "message": (
-                "The student name could not be read from "
-                "the certificate email."
-            ),
-        }
-
-    if not certificate_name:
-        return {
-            "status": "document_mismatch",
-            "reason": "certificate_name_missing",
-            "message": (
-                "The student name could not be read from "
-                "the certificate image."
-            ),
-        }
-
-    # --------------------------------------------------------
-    # Compare BOTH uploaded documents
-    # --------------------------------------------------------
-
-    if _normalize_verification_id(email_id) != _normalize_verification_id(
-        certificate_id
-    ):
-        return {
-            "status": "document_mismatch",
-            "reason": "certificate_id_mismatch",
-            "message": (
-                "The Certificate ID in the certificate email "
-                "does not match the Certificate ID on the "
-                "certificate image."
-            ),
-            "emailCertificateId": email_id,
-            "certificateId": certificate_id,
-        }
-
-    if not _names_match(email_name, certificate_name):
-        return {
-            "status": "document_mismatch",
-            "reason": "student_name_mismatch",
-            "message": (
-                "The student name in the certificate email "
-                "does not match the student name on the "
-                "certificate image."
-            ),
-            "emailName": email_name,
-            "certificateName": certificate_name,
-        }
-
-    # If both documents contain course/institution data,
-    # compare them. Missing OCR data is tolerated because
-    # layouts differ between emails and certificates.
-    if (
-        email_course
-        and certificate_course
-        and _normalize_verification_text(email_course)
-        != _normalize_verification_text(certificate_course)
-    ):
-        return {
-            "status": "document_mismatch",
-            "reason": "course_mismatch",
-            "message": (
-                "The course shown in the certificate email "
-                "does not match the certificate image."
-            ),
-        }
-
-    if (
-        email_institution
-        and certificate_institution
-        and _normalize_verification_text(email_institution)
-        not in _normalize_verification_text(certificate_institution)
-        and _normalize_verification_text(certificate_institution)
-        not in _normalize_verification_text(email_institution)
-    ):
-        return {
-            "status": "document_mismatch",
-            "reason": "institution_mismatch",
-            "message": (
-                "The institution shown in the certificate "
-                "email does not match the certificate image."
-            ),
-        }
-
-    # --------------------------------------------------------
-    # Find the authoritative certificate in SQLite
-    # --------------------------------------------------------
-
-    row = _lookup_certificate(certificate_id)
-
+    # ---- 3. official record -----------------------------------------------------------
+    row = None
+    for cand in vf.id_candidates(cert_id):
+        row = _lookup_certificate(cand)
+        if row:
+            break
     if not row:
-        return {
-            "status": "not_found",
-            "certificateId": certificate_id,
-            "message": (
-                "No certificate with this Certificate ID "
-                "exists in the AuthNode database."
-            ),
-        }
+        return finish(
+            "not_found", "No certificate with this ID exists in the AuthNode database.",
+            reason="certificate_not_found",
+        )
+    official_id = row["id"]
+    certificate = row_to_cert(row)
+    checks["databaseCertificateIdMatch"] = True
 
-    # --------------------------------------------------------
-    # Compare both documents with the official DB record
-    # --------------------------------------------------------
+    # ---- 4. documents vs official record ---------------------------------------------
+    if vf.compare_names(cert_name, row["student_name"]) != vf.MATCH:
+        return finish(
+            "name_mismatch", "The student name on the certificate does not match the official record.",
+            reason="database_name_mismatch", certificate=certificate, cert_id_value=official_id,
+            detectedName=cert_name, officialName=row["student_name"],
+        )
+    checks["databaseStudentMatch"] = True
 
-    official_id = str(row["id"] or "").strip()
-    official_name = str(
-        row["student_name"] or ""
-    ).strip()
-    official_email = str(
-        row["student_email"] or ""
-    ).strip().lower()
-    official_course = str(
-        row["course"] or ""
-    ).strip()
-    official_institution = str(
-        row["institution"] or ""
-    ).strip()
+    if vf.compare_emails(email_addr, row["student_email"]) != vf.MATCH:
+        return finish(
+            "email_mismatch", "The student email in the email image does not match the official record.",
+            reason="database_email_mismatch", certificate=certificate, cert_id_value=official_id,
+        )
+    if cert_email and vf.compare_emails(cert_email, row["student_email"]) == vf.MISMATCH:
+        return finish(
+            "email_mismatch", "The student email on the certificate does not match the official record.",
+            reason="database_email_mismatch", certificate=certificate, cert_id_value=official_id,
+        )
+    checks["databaseEmailMatch"] = True
 
-    if _normalize_verification_id(certificate_id) != _normalize_verification_id(
-        official_id
-    ):
-        return {
-            "status": "document_mismatch",
-            "reason": "database_id_mismatch",
-            "message": (
-                "The Certificate ID from the uploaded documents "
-                "does not match the official database record."
-            ),
-            "certificate": row_to_cert(row),
-        }
+    course_res = max((vf.compare_phrase(c, row["course"]) for c in (cert_course, email_course) if c),
+                     default=vf.MISSING, key=lambda r: {vf.MISMATCH: 0, vf.MISSING: 1, vf.MATCH: 2}[r])
+    inst_res = max((vf.compare_phrase(c, row["institution"]) for c in (cert_inst, email_inst) if c),
+                   default=vf.MISSING, key=lambda r: {vf.MISMATCH: 0, vf.MISSING: 1, vf.MATCH: 2}[r])
+    if course_res == vf.MISMATCH:
+        return finish("course_mismatch", "The course does not match the official record.",
+                      reason="database_course_mismatch", certificate=certificate, cert_id_value=official_id)
+    if inst_res == vf.MISMATCH:
+        return finish("institution_mismatch", "The institution does not match the official record.",
+                      reason="database_institution_mismatch", certificate=certificate, cert_id_value=official_id)
+    checks["databaseCourseMatch"] = course_res == vf.MATCH
+    checks["databaseInstitutionMatch"] = inst_res == vf.MATCH
+    if course_res != vf.MATCH and inst_res != vf.MATCH:
+        # ID + name + email agree, but nothing corroborates the content of the certificate
+        return finish(
+            "manual_review",
+            "Course and institution could not be read from the documents, so the certificate cannot be fully confirmed.",
+            reason="ocr_incomplete", certificate=certificate, cert_id_value=official_id,
+            missingFields=["course", "institution"],
+        )
 
-    if not _names_match(certificate_name, official_name):
-        return {
-            "status": "name_mismatch",
-            "reason": "database_name_mismatch",
-            "message": (
-                "The student name on the uploaded certificate "
-                "does not match the official database record."
-            ),
-            "certificate": row_to_cert(row),
-            "detectedName": certificate_name,
-            "officialName": official_name,
-        }
-
-    # The email screenshot is specifically used to establish
-    # that the certificate notification belongs to the same
-    # official student record.
-    if email_address and email_address != official_email:
-        return {
-            "status": "email_mismatch",
-            "reason": "database_email_mismatch",
-            "message": (
-                "The email address in the certificate email "
-                "does not match the official certificate record."
-            ),
-            "certificate": row_to_cert(row),
-        }
-
-    if (
-        certificate_course
-        and official_course
-        and _normalize_verification_text(certificate_course)
-        != _normalize_verification_text(official_course)
-    ):
-        return {
-            "status": "course_mismatch",
-            "reason": "database_course_mismatch",
-            "message": (
-                "The course on the uploaded certificate does "
-                "not match the official database record."
-            ),
-            "certificate": row_to_cert(row),
-        }
-
-    if (
-        certificate_institution
-        and official_institution
-        and _normalize_verification_text(certificate_institution)
-        not in _normalize_verification_text(official_institution)
-        and _normalize_verification_text(official_institution)
-        not in _normalize_verification_text(certificate_institution)
-    ):
-        return {
-            "status": "institution_mismatch",
-            "reason": "database_institution_mismatch",
-            "message": (
-                "The institution on the uploaded certificate "
-                "does not match the official database record."
-            ),
-            "certificate": row_to_cert(row),
-        }
-
-    # --------------------------------------------------------
-    # Cryptographic verification
-    # --------------------------------------------------------
-
+    # ---- 5. SHA-256 + RSA ------------------------------------------------------------
     crypto_status = _cryptographically_verify_row(row)
-
     if crypto_status == "revoked":
-        return {
-            "status": "revoked",
-            "certificate": row_to_cert(row),
-            "certificateId": official_id,
-            "message": "This certificate has been revoked.",
-        }
-
+        return finish("revoked", "This certificate has been revoked.", certificate=certificate, cert_id_value=official_id)
     if crypto_status in {"tampered", "signature_invalid"}:
-        return {
-            "status": "signature_invalid" if crypto_status == "signature_invalid" else "tampered",
-            "certificate": row_to_cert(row),
-            "certificateId": official_id,
-            "message": (
-                "The certificate issuer signature is missing or invalid."
-                if crypto_status == "signature_invalid" else
-                "The certificate SHA-256 fingerprint does not match the official record."
-            ),
-        }
+        checks["sha256Match"] = crypto_status != "tampered"
+        checks["rsaSignatureValid"] = False
+        return finish(
+            crypto_status,
+            "The certificate issuer signature is missing or invalid." if crypto_status == "signature_invalid"
+            else "The certificate SHA-256 fingerprint does not match the official record.",
+            certificate=certificate, cert_id_value=official_id,
+        )
+    checks["sha256Match"] = True
+    checks["rsaSignatureValid"] = True
 
-    chain_checks = {"blockchainEnabled": blockchain.is_enabled(), "blockchainRegistered": False}
+    # ---- 6. blockchain ----------------------------------------------------------------
+    checks["blockchainEnabled"] = blockchain.is_enabled()
+    checks["blockchainRegistered"] = False
     if blockchain.is_enabled():
         try:
             chain = blockchain.verify(official_id, row["hash"])
         except blockchain.BlockchainUnavailable:
-            return {"status": "verification_error", "certificate": row_to_cert(row), "certificateId": official_id, "message": "Blockchain verification could not be completed. No genuine result is available."}
-        chain_checks.update({"blockchainRegistered": bool(chain.get("exists")), "blockchainHashMatch": bool(chain.get("hashMatches")), "blockchainRevoked": bool(chain.get("revoked")), "blockchainNetwork": chain.get("network")})
+            return finish(
+                "verification_error",
+                "Blockchain verification could not be completed. No genuine result is available.",
+                certificate=certificate, cert_id_value=official_id,
+            )
+        checks.update({
+            "blockchainRegistered": bool(chain.get("exists")),
+            "blockchainHashMatch": bool(chain.get("hashMatches")),
+            "blockchainRevoked": bool(chain.get("revoked")),
+            "blockchainNetwork": chain.get("network"),
+        })
         if not chain.get("exists"):
-            return {"status": "not_registered", "certificate": row_to_cert(row), "certificateId": official_id, "checks": chain_checks, "message": "The certificate exists in the local record but is not registered on the configured blockchain."}
+            return finish("not_registered", "The certificate exists locally but is not registered on the configured blockchain.",
+                          certificate=certificate, cert_id_value=official_id)
         if chain.get("revoked"):
-            return {"status": "revoked", "certificate": row_to_cert(row), "certificateId": official_id, "checks": chain_checks, "message": "This certificate has been revoked on the blockchain."}
+            return finish("revoked", "This certificate has been revoked on the blockchain.",
+                          certificate=certificate, cert_id_value=official_id)
         if not chain.get("hashMatches"):
-            return {"status": "tampered", "certificate": row_to_cert(row), "certificateId": official_id, "checks": chain_checks, "message": "The blockchain fingerprint does not match the certificate record."}
+            return finish("tampered", "The blockchain fingerprint does not match the certificate record.",
+                          certificate=certificate, cert_id_value=official_id)
 
+    message = (
+        "Certificate verified. The email and certificate agree with each other and with the official record; "
+        "the SHA-256 fingerprint and issuer RSA signature are valid. "
+        + ("The blockchain registration also passed." if checks["blockchainEnabled"]
+           else "Blockchain is not enabled on this backend, so this is a local cryptographic verification only.")
+    )
+    return finish("verified", message, certificate=certificate, cert_id_value=official_id,
+                  verificationType="BLOCKCHAIN_NATIVE" if checks["blockchainRegistered"] else "LOCAL_CRYPTOGRAPHIC")
+
+
+# ============================================================
+# STUDENT DASHBOARD  (/certificates/mine)
+# ============================================================
+#
+# Returns, newest first:
+#   * every certificate the student verified through the Verify page
+#     (persistent history, one row per certificate)
+#   * every certificate issued to the student's account
+#     (matched by email, with name only as a fallback for legacy rows)
+# ============================================================
+
+@app.get("/api/certificates/mine")
+def my_certificates(user=Depends(get_current_user)):
+    if user["role"] not in ("student", "employer"):
+        raise HTTPException(status_code=403, detail="Student or employer session required")
+
+    items: dict[str, dict] = {}
+    with get_connection() as conn:
+        verified = conn.execute(
+            """SELECT v.certificate_id, v.status AS v_status, v.verified_at, v.attempts, v.checks_json,
+                      c.*
+               FROM verifications v JOIN certificates c ON c.id = v.certificate_id
+               WHERE v.user_id = ? AND v.status = 'verified'
+               ORDER BY v.verified_at DESC""",
+            (user["id"],),
+        ).fetchall()
+        for r in verified:
+            d = row_to_cert(r).model_dump()
+            d.update(
+                verification_status="verified", verified_at=r["verified_at"],
+                verification_attempts=r["attempts"], source="verified_upload",
+                checks=json.loads(r["checks_json"] or "{}"),
+            )
+            items[r["id"]] = d
+
+        if user["role"] == "student":
+            if user.get("email"):
+                owned = conn.execute(
+                    "SELECT * FROM certificates WHERE lower(student_email) = lower(?) ORDER BY created_at DESC",
+                    (user["email"],),
+                ).fetchall()
+            else:
+                owned = conn.execute(
+                    "SELECT * FROM certificates WHERE lower(student_name) = lower(?) ORDER BY created_at DESC",
+                    (user["name"],),
+                ).fetchall()
+            for r in owned:
+                if r["id"] in items:
+                    items[r["id"]]["source"] = "issued_and_verified"
+                    continue
+                d = row_to_cert(r).model_dump()
+                d.update(
+                    verification_status="revoked" if r["status"] == "REVOKED" else "issued",
+                    verified_at=None, verification_attempts=0, source="issued", checks={},
+                )
+                items[r["id"]] = d
+
+        failed = conn.execute(
+            """SELECT status, reason, message, certificate_id, verified_at
+               FROM verifications WHERE user_id = ? AND status != 'verified'
+               ORDER BY verified_at DESC LIMIT 20""",
+            (user["id"],),
+        ).fetchall()
+
+    certs = sorted(items.values(), key=lambda d: d.get("verified_at") or d["created_at"], reverse=True)
     return {
-        "status": "verified",
-        "certificate": row_to_cert(row),
-        "certificateId": official_id,
-        "checks": {
-            "emailCertificateIdMatch": True,
-            "emailCertificateNameMatch": True,
-            "databaseCertificateIdMatch": True,
-            "databaseStudentMatch": True,
-            "databaseEmailMatch": True,
-            "sha256Match": True,
-            "rsaSignatureValid": True,
-            **chain_checks,
-        },
-        "message": (
-            "Certificate verified successfully. The email and certificate match, the official record and RSA signature passed. "
-            + ("The blockchain registration also passed." if chain_checks["blockchainEnabled"] else "Blockchain is not enabled on this backend; this is a local cryptographic verification only.")
-        ),
+        "certificates": certs,
+        "failedAttempts": [dict(f) for f in failed],
     }
 
 
@@ -1968,13 +1774,32 @@ def revoke_certificate(cert_id: str, user=Depends(get_current_user)):
     return {"certificate_id": row["id"], "status": "REVOKED", "transaction_hash": result["transactionHash"], "network": "sepolia"}
 
 
+def _pdf_text(contents: bytes) -> str | None:
+    try:
+        import io
+        from pypdf import PdfReader
+    except Exception:
+        return None
+    try:
+        reader = PdfReader(io.BytesIO(contents))
+        return " ".join((p.extract_text() or "") for p in reader.pages[:10])
+    except Exception:
+        return None
+
+
 @app.post("/api/certificates/verify")
-async def verify_uploaded_pdf(cert_id: str = Form(...), file: UploadFile = File(...)):
-    """Verify the certificate record using its ID and return the uploaded PDF's
-    independent digest for audit. This does not pretend PDF bytes equal the
-    canonical certificate-data hash; PDF re-exports/scans change byte hashes.
+async def verify_uploaded_pdf(request: Request, cert_id: str = Form(...), file: UploadFile = File(...)):
+    """Verify an uploaded PDF certificate.
+
+    1. The record for `cert_id` is verified (SHA-256 + RSA + blockchain).
+    2. The text inside the uploaded PDF must contain the certificate ID and the
+       official student name / course. A PDF whose visible content was edited
+       therefore no longer verifies, even if its ID points to a real record.
     """
-    if not cert_id.strip() or len(cert_id) > 80:
+    rate_limit(request, "verify", 40)
+    user = get_optional_user(request)
+    cert_id = cert_id.strip()
+    if not cert_id or len(cert_id) > 80:
         raise HTTPException(status_code=400, detail="A valid certificate ID is required")
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=415, detail="Upload a PDF certificate")
@@ -1983,14 +1808,51 @@ async def verify_uploaded_pdf(cert_id: str = Form(...), file: UploadFile = File(
         raise HTTPException(status_code=413, detail="PDF must be 10 MB or smaller")
     if not contents.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="The uploaded file is not a valid PDF")
-    pdf_digest = __import__("hashlib").sha256(contents).hexdigest()
-    result = await asyncio.to_thread(verify_certificate, cert_id)
+
+    pdf_digest = hashlib.sha256(contents).hexdigest()
+    row = None
+    for cand in vf.id_candidates(cert_id):
+        row = await asyncio.to_thread(_lookup_certificate, cand)
+        if row:
+            break
+
+    base = {"certificate_id": cert_id, "uploaded_pdf_sha256": pdf_digest,
+            "blockchain_enabled": blockchain.is_enabled()}
+    if not row:
+        return {**base, "verification_status": "not_found", "certificate": None}
+
+    result = await asyncio.to_thread(verify_certificate, row["id"])
+    status = result.status
+    content_checks = {"pdfTextReadable": False}
+
+    if status == "verified":
+        text = await asyncio.to_thread(_pdf_text, contents)
+        if text is None or not text.strip():
+            status = "manual_review"      # scanned/unreadable PDF: cannot confirm content
+        else:
+            norm = vf.normalize_text(text)
+            compact = vf.normalize_cert_id(text)
+            content_checks = {
+                "pdfTextReadable": True,
+                "pdfContainsCertificateId": vf.normalize_cert_id(row["id"]) in compact,
+                "pdfContainsStudentName": vf.normalize_text(row["student_name"]) in norm,
+                "pdfContainsCourse": vf.normalize_text(row["course"]) in norm,
+            }
+            if not all(content_checks.values()):
+                status = "tampered"
+
+    saved = _save_verification(
+        user, certificate_id=row["id"], status="verified" if status == "verified" else status,
+        reason="pdf_upload", message=f"PDF verification: {status}",
+        checks=content_checks, extracted={"pdf_sha256": pdf_digest}, fingerprint=pdf_digest,
+    )
     return {
-        "certificate_id": cert_id,
-        "verification_status": result.status,
+        **base,
+        "certificate_id": row["id"],
+        "verification_status": status,
         "certificate": result.entry.model_dump() if result.entry else None,
-        "uploaded_pdf_sha256": pdf_digest,
-        "blockchain_enabled": blockchain.is_enabled(),
-        "blockchain_registered": blockchain.is_enabled() and result.status == "verified",
-        "pdf_hash_semantics": "Audit fingerprint of the uploaded file only; it is not compared with the canonical certificate-data hash.",
+        "content_checks": content_checks,
+        "saved": bool(saved),
+        "blockchain_registered": blockchain.is_enabled() and status == "verified",
+        "pdf_hash_semantics": "The PDF's text content is compared with the signed official record; the byte digest is stored for audit.",
     }
