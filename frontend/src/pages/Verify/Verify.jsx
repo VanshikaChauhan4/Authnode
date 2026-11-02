@@ -123,15 +123,27 @@ function parseCertificate(text) {
   }
 }
 
+function isPdfFile(file) {
+  return file?.type === 'application/pdf' || /\.pdf$/i.test(file?.name || '')
+}
+
+function isJpgFile(file) {
+  return file?.type === 'image/jpeg' || /\.(jpe?g)$/i.test(file?.name || '')
+}
+
 async function readPdfWithOcr(file, onProgress) {
   let worker
+  let pdf
+  let loadingTask
 
   try {
     const buffer = await file.arrayBuffer()
-
-    const pdf = await pdfjsLib.getDocument({
+    // getDocument() returns a PDFDocumentLoadingTask. Its destroy() method
+    // performs cleanup; the resolved PDFDocumentProxy does not expose destroy().
+    loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(buffer),
-    }).promise
+    })
+    pdf = await loadingTask.promise
 
     if (pdf.numPages > MAX_PAGES) {
       throw new Error(
@@ -140,38 +152,30 @@ async function readPdfWithOcr(file, onProgress) {
     }
 
     worker = await createWorker('eng')
-
     let fullText = ''
 
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-      onProgress(
-        Math.round(((pageNumber - 1) / pdf.numPages) * 100)
-      )
+      onProgress(Math.round(((pageNumber - 1) / pdf.numPages) * 100))
 
       const page = await pdf.getPage(pageNumber)
       const viewport = page.getViewport({ scale: 2 })
-
       const canvas = document.createElement('canvas')
       const context = canvas.getContext('2d')
+
+      if (!context) {
+        throw new Error('Your browser could not prepare the PDF page for OCR.')
+      }
 
       canvas.width = viewport.width
       canvas.height = viewport.height
 
-      await page.render({
-        canvasContext: context,
-        viewport,
-      }).promise
-
+      await page.render({ canvasContext: context, viewport }).promise
       const recognition = await worker.recognize(canvas)
-
       fullText += `\n${recognition.data.text}\n`
 
       canvas.width = 0
       canvas.height = 0
-
-      onProgress(
-        Math.round((pageNumber / pdf.numPages) * 100)
-      )
+      onProgress(Math.round((pageNumber / pdf.numPages) * 100))
     }
 
     return fullText
@@ -179,7 +183,59 @@ async function readPdfWithOcr(file, onProgress) {
     if (worker) {
       await worker.terminate()
     }
+    if (loadingTask) {
+      await loadingTask.destroy()
+    }
   }
+}
+
+async function readJpgWithOcr(file, onProgress) {
+  let worker
+  let objectUrl
+
+  try {
+    onProgress(10)
+    objectUrl = URL.createObjectURL(file)
+
+    const image = new Image()
+    image.decoding = 'async'
+    image.src = objectUrl
+
+    await new Promise((resolve, reject) => {
+      image.onload = resolve
+      image.onerror = () => reject(new Error('The JPG image could not be opened.'))
+    })
+
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('Your browser could not prepare the image for OCR.')
+    }
+
+    const scale = Math.min(2, 2400 / Math.max(image.naturalWidth, image.naturalHeight))
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    onProgress(35)
+    worker = await createWorker('eng')
+    const recognition = await worker.recognize(canvas)
+    onProgress(100)
+
+    canvas.width = 0
+    canvas.height = 0
+    return recognition.data.text || ''
+  } finally {
+    if (worker) await worker.terminate()
+    if (objectUrl) URL.revokeObjectURL(objectUrl)
+  }
+}
+
+async function readCertificateWithOcr(file, onProgress) {
+  if (isPdfFile(file)) return readPdfWithOcr(file, onProgress)
+  if (isJpgFile(file)) return readJpgWithOcr(file, onProgress)
+  throw new Error('Unsupported file. Please upload a PDF or JPG/JPEG certificate.')
 }
 
 export default function Verify() {
@@ -216,16 +272,15 @@ export default function Verify() {
 
     if (!selected) return
 
-    if (
-      selected.type !== 'application/pdf' &&
-      !selected.name.toLowerCase().endsWith('.pdf')
-    ) {
-      setError('Please upload a valid PDF certificate.')
+    if (!isPdfFile(selected) && !isJpgFile(selected)) {
+      setError('Please upload a PDF or JPG/JPEG certificate.')
+      event.target.value = ''
       return
     }
 
     if (selected.size > MAX_FILE_SIZE) {
-      setError('The certificate PDF must be smaller than 10 MB.')
+      setError('The certificate file must be 10 MB or smaller.')
+      event.target.value = ''
       return
     }
 
@@ -253,7 +308,7 @@ export default function Verify() {
 
   async function scanCertificate() {
     if (!file || !certificateId.trim()) {
-      setError('Enter your Certificate ID and upload your certificate PDF.')
+      setError('Enter your Certificate ID and upload your certificate PDF or JPG image.')
       return
     }
 
@@ -264,7 +319,7 @@ export default function Verify() {
     setOcrProgress(0)
 
     try {
-      const text = await readPdfWithOcr(file, setOcrProgress)
+      const text = await readCertificateWithOcr(file, setOcrProgress)
       const extracted = parseCertificate(text)
 
       setOcrText(text)
@@ -272,7 +327,7 @@ export default function Verify() {
 
       if (!extracted.certificateId) {
         setError(
-          'OCR could not identify a Certificate ID. Upload a clearer, original certificate PDF.'
+          'OCR could not identify a Certificate ID. Upload a clearer PDF or JPG certificate.'
         )
         setStage('upload')
         return
@@ -358,10 +413,10 @@ export default function Verify() {
         status,
         certificate: data.certificate || null,
         certificateId: data.certificate_id || certificateId,
-        uploadedPdfSha256: data.uploaded_pdf_sha256 || '',
+        uploadedFileSha256: data.uploaded_file_sha256 || data.uploaded_pdf_sha256 || '',
         blockchainEnabled: data.blockchain_enabled,
         blockchainRegistered: data.blockchain_registered,
-        pdfHashSemantics: data.pdf_hash_semantics || '',
+        fileHashSemantics: data.file_hash_semantics || data.pdf_hash_semantics || '',
         message: data.message || '',
         ocrData,
       })
@@ -447,7 +502,7 @@ export default function Verify() {
 
           status: 'VERIFIED',
 
-          verificationType: 'PDF_RECORD_SHA256_RSA_VERIFICATION',
+          verificationType: 'DOCUMENT_RECORD_SHA256_RSA_VERIFICATION',
 
           verifiedAt: new Date().toISOString(),
 
@@ -516,7 +571,7 @@ export default function Verify() {
               <h2>Provide certificate credentials</h2>
               <p>
                 Enter the Certificate ID and upload the original
-                certificate PDF.
+                certificate PDF or JPG image.
               </p>
             </div>
           </div>
@@ -555,7 +610,7 @@ export default function Verify() {
                 <input
                   ref={inputRef}
                   type="file"
-                  accept=".pdf,application/pdf"
+                  accept=".pdf,.jpg,.jpeg,application/pdf,image/jpeg"
                   onChange={handleFileSelect}
                   hidden
                 />
@@ -573,10 +628,10 @@ export default function Verify() {
                     <strong>Upload your certificate</strong>
 
                     <span>
-                      Select your original PDF document
+                      Select your original PDF or JPG/JPEG document
                     </span>
 
-                    <small>PDF format · Maximum 10 MB</small>
+                    <small>PDF or JPG format · Maximum 10 MB</small>
                   </button>
                 ) : (
                   <div className="verify-selected-file">
@@ -630,7 +685,7 @@ export default function Verify() {
               <h3>Scanning certificate</h3>
 
               <p>
-                OCR is extracting information from your PDF.
+                OCR is extracting information from your certificate.
                 Please keep this page open.
               </p>
 
@@ -818,11 +873,11 @@ export default function Verify() {
                         </div>
                       )}
 
-                      {result.uploadedPdfSha256 && (
+                      {result.uploadedFileSha256 && (
                         <div>
-                          <span>Uploaded PDF audit SHA-256</span>
+                          <span>Uploaded file audit SHA-256</span>
                           <strong className="verify-hash">
-                            {result.uploadedPdfSha256}
+                            {result.uploadedFileSha256}
                           </strong>
                         </div>
                       )}

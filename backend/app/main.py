@@ -1788,64 +1788,120 @@ def _pdf_text(contents: bytes) -> str | None:
 
 
 @app.post("/api/certificates/verify")
-async def verify_uploaded_pdf(request: Request, cert_id: str = Form(...), file: UploadFile = File(...)):
-    """Verify an uploaded PDF certificate.
+async def verify_uploaded_document(
+    request: Request,
+    cert_id: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """Verify a certificate uploaded as PDF or JPEG/JPG.
 
-    1. The record for `cert_id` is verified (SHA-256 + RSA + blockchain).
-    2. The text inside the uploaded PDF must contain the certificate ID and the
-       official student name / course. A PDF whose visible content was edited
-       therefore no longer verifies, even if its ID points to a real record.
+    The registered certificate's RSA/SHA-256 status is checked first.
+    The uploaded document is then checked for the certificate ID,
+    student name, and course using PDF text extraction or image OCR.
     """
     rate_limit(request, "verify", 40)
     user = get_optional_user(request)
     cert_id = cert_id.strip()
+
     if not cert_id or len(cert_id) > 80:
         raise HTTPException(status_code=400, detail="A valid certificate ID is required")
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=415, detail="Upload a PDF certificate")
+
     contents = await file.read(10 * 1024 * 1024 + 1)
     if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="PDF must be 10 MB or smaller")
-    if not contents.startswith(b"%PDF-"):
-        raise HTTPException(status_code=400, detail="The uploaded file is not a valid PDF")
+        raise HTTPException(status_code=413, detail="The certificate file must be 10 MB or smaller")
 
-    pdf_digest = hashlib.sha256(contents).hexdigest()
+    filename = (file.filename or "").lower()
+    is_pdf = contents.startswith(b"%PDF-") and (
+        file.content_type == "application/pdf" or filename.endswith(".pdf")
+    )
+    is_jpeg = contents.startswith(b"\xff\xd8\xff") and (
+        file.content_type in {"image/jpeg", "image/jpg"}
+        or filename.endswith((".jpg", ".jpeg"))
+    )
+
+    if not is_pdf and not is_jpeg:
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported file. Upload a valid PDF or JPG/JPEG certificate.",
+        )
+
+    file_digest = hashlib.sha256(contents).hexdigest()
     row = None
-    for cand in vf.id_candidates(cert_id):
-        row = await asyncio.to_thread(_lookup_certificate, cand)
+    for candidate in vf.id_candidates(cert_id):
+        row = await asyncio.to_thread(_lookup_certificate, candidate)
         if row:
             break
 
-    base = {"certificate_id": cert_id, "uploaded_pdf_sha256": pdf_digest,
-            "blockchain_enabled": blockchain.is_enabled()}
+    base = {
+        "certificate_id": cert_id,
+        "uploaded_file_sha256": file_digest,
+        # Kept temporarily for compatibility with older frontend builds.
+        "uploaded_pdf_sha256": file_digest,
+        "file_type": "pdf" if is_pdf else "jpeg",
+        "blockchain_enabled": blockchain.is_enabled(),
+    }
+
     if not row:
         return {**base, "verification_status": "not_found", "certificate": None}
 
     result = await asyncio.to_thread(verify_certificate, row["id"])
     status = result.status
-    content_checks = {"pdfTextReadable": False}
+    extracted_text = ""
+    text_readable = False
 
     if status == "verified":
-        text = await asyncio.to_thread(_pdf_text, contents)
-        if text is None or not text.strip():
-            status = "manual_review"      # scanned/unreadable PDF: cannot confirm content
-        else:
-            norm = vf.normalize_text(text)
-            compact = vf.normalize_cert_id(text)
-            content_checks = {
-                "pdfTextReadable": True,
-                "pdfContainsCertificateId": vf.normalize_cert_id(row["id"]) in compact,
-                "pdfContainsStudentName": vf.normalize_text(row["student_name"]) in norm,
-                "pdfContainsCourse": vf.normalize_text(row["course"]) in norm,
-            }
-            if not all(content_checks.values()):
-                status = "tampered"
+        try:
+            if is_pdf:
+                extracted_text = await asyncio.to_thread(_pdf_text, contents) or ""
+            else:
+                ocr_result = await asyncio.to_thread(run_ocr, contents)
+                extracted_text = (ocr_result or {}).get("text", "")
+
+            text_readable = bool(extracted_text.strip())
+        except Exception:
+            # An OCR/extraction failure must never be treated as a pass.
+            extracted_text = ""
+            text_readable = False
+
+        if not text_readable:
+            status = "manual_review"
+
+    content_checks = {
+        "documentTextReadable": text_readable,
+        "documentContainsCertificateId": False,
+        "documentContainsStudentName": False,
+        "documentContainsCourse": False,
+    }
+
+    if status == "verified" and text_readable:
+        normalized_text = vf.normalize_text(extracted_text)
+        compact_text = vf.normalize_cert_id(extracted_text)
+        content_checks.update({
+            "documentContainsCertificateId": (
+                vf.normalize_cert_id(row["id"]) in compact_text
+            ),
+            "documentContainsStudentName": (
+                vf.normalize_text(row["student_name"]) in normalized_text
+            ),
+            "documentContainsCourse": (
+                vf.normalize_text(row["course"]) in normalized_text
+            ),
+        })
+
+        if not all(content_checks.values()):
+            status = "tampered"
 
     saved = _save_verification(
-        user, certificate_id=row["id"], status="verified" if status == "verified" else status,
-        reason="pdf_upload", message=f"PDF verification: {status}",
-        checks=content_checks, extracted={"pdf_sha256": pdf_digest}, fingerprint=pdf_digest,
+        user,
+        certificate_id=row["id"],
+        status="verified" if status == "verified" else status,
+        reason="document_upload_jpeg" if is_jpeg else "document_upload_pdf",
+        message=f"Uploaded document verification: {status}",
+        checks=content_checks,
+        extracted={"file_sha256": file_digest, "file_type": base["file_type"]},
+        fingerprint=file_digest,
     )
+
     return {
         **base,
         "certificate_id": row["id"],
@@ -1854,5 +1910,14 @@ async def verify_uploaded_pdf(request: Request, cert_id: str = Form(...), file: 
         "content_checks": content_checks,
         "saved": bool(saved),
         "blockchain_registered": blockchain.is_enabled() and status == "verified",
-        "pdf_hash_semantics": "The PDF's text content is compared with the signed official record; the byte digest is stored for audit.",
+        "file_hash_semantics": (
+            "The uploaded PDF text or JPG image OCR text is compared with the signed official record; "
+            "the uploaded file byte digest is stored for audit."
+        ),
+        # Backwards-compatible response field for older frontend builds.
+        "pdf_hash_semantics": (
+            "The uploaded document text is compared with the signed official record; "
+            "the uploaded file byte digest is stored for audit."
+        ),
     }
+
