@@ -23,7 +23,11 @@ Institution signs the certificate hash
     ↓
 Certificate is stored in SQLite
     ↓
+<<<<<<< HEAD
 Optional blockchain registration (when configured)
+=======
+Blockchain fields are reserved for the next phase
+>>>>>>> c647d4676e30cfd403510d37110663e0887dacc8
     ↓
 Certificate is returned to React
 """
@@ -79,6 +83,7 @@ app = FastAPI(
 # CORS
 # ============================================================
 
+<<<<<<< HEAD
 _default_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -96,6 +101,21 @@ app.add_middleware(
     allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
+=======
+app.add_middleware(
+    CORSMiddleware,
+
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+    ],
+
+    allow_credentials=True,
+
+    allow_methods=["*"],
+
+>>>>>>> c647d4676e30cfd403510d37110663e0887dacc8
     allow_headers=["*"],
 )
 

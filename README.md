@@ -7,7 +7,11 @@ This is an upgrade of the supplied AuthNode application. The original React/Vite
 | Layer | Existing / upgraded technology | Default port |
 |---|---|---:|
 | Frontend | React 18, Vite, React Router | 5173 |
+<<<<<<< HEAD
 | Certificate API | FastAPI, SQLite, SHA-256, RSA-2048 / PKCS#1 v1.5 | 5000 |
+=======
+| Certificate API | FastAPI, SQLite, SHA-256, RSA-PSS | 5000 |
+>>>>>>> c647d4676e30cfd403510d37110663e0887dacc8
 | Blockchain | Solidity 0.8.24, Hardhat, ethers.js 6, Ethereum Sepolia | RPC |
 | AI assistant | FastAPI, LangChain, ChromaDB, BM25, HuggingFace embeddings, Ollama | 8000 |
 | LLM | Llama 3.1 8B via Ollama | 11434 |
@@ -70,8 +74,11 @@ python run.py
 
 The API is at `http://localhost:5000`; health check: `http://localhost:5000/health`.
 
+<<<<<<< HEAD
 For a deployed frontend, set `AUTHNODE_CORS_ORIGINS` in `backend/.env` to the exact comma-separated frontend origins (including `https://`), and set `VITE_API_URL` / `VITE_CHAT_URL` in `frontend/.env` to the deployed API URLs before building. A public frontend must not use `localhost` as its API host.
 
+=======
+>>>>>>> c647d4676e30cfd403510d37110663e0887dacc8
 For production, set `AUTHNODE_KEY_ENCRYPTION_KEY` in the backend environment. Generate a Fernet key with:
 
 ```powershell
@@ -220,4 +227,8 @@ npm run lint
 - Existing legacy institution RSA private keys may be plaintext in older SQLite databases. New keys are encrypted; legacy keys should be migrated and rotated.
 - The PDF upload endpoint verifies the certificate ID against the official canonical record and returns a separate raw PDF digest. It does not OCR arbitrary PDFs to discover IDs or prove that PDF bytes are identical to the issued artifact.
 - The chatbot's live verification routing is deterministic and read-only; explanatory questions use tool context plus hybrid RAG. It does not have permission to mutate records.
+<<<<<<< HEAD
 - Frontend build and Hardhat compilation/tests require dependency installation. Run the validation commands above after `npm install`; they must pass before deployment.
+=======
+- Frontend build and Hardhat compilation/tests require dependency installation. The source environment used for this update did not complete npm dependency installation, so those builds could not be certified here.
+>>>>>>> c647d4676e30cfd403510d37110663e0887dacc8
