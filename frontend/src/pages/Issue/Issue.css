@@ -1,0 +1,85 @@
+.issue-award-icon {
+  color: var(--foil);
+  margin-bottom: 8px;
+}
+
+.certificate-id-display {
+  width: 100%;
+  padding: 13px 16px;
+  margin-bottom: 12px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+
+  text-align: left;
+
+  border-radius: var(--radius-sm);
+
+  background:
+    rgba(201, 162, 39, 0.06);
+
+  border:
+    1px solid
+    rgba(201, 162, 39, 0.18);
+}
+
+.certificate-id-display span,
+.certificate-meta span {
+  color: var(--paper-dim);
+
+  font-size: 0.7rem;
+
+  text-transform: uppercase;
+
+  letter-spacing: 0.08em;
+}
+
+.certificate-id-display strong {
+  color: var(--foil-bright);
+
+  font-family: var(--font-mono);
+
+  font-size: 0.85rem;
+}
+
+.certificate-meta {
+  width: 100%;
+
+  display: grid;
+
+  grid-template-columns:
+    1fr 1fr;
+
+  gap: 10px;
+
+  margin-bottom: 20px;
+}
+
+.certificate-meta > div {
+  padding: 12px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+
+  text-align: left;
+
+  border-radius:
+    var(--radius-sm);
+
+  background:
+    rgba(255, 255, 255, 0.025);
+
+  border:
+    1px solid
+    rgba(255, 255, 255, 0.05);
+}
+
+.certificate-meta strong {
+  color: var(--paper);
+
+  font-size: 0.78rem;
+
+  word-break: break-word;
+}

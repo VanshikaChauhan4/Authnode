@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   AUTHNODE DESIGN TOKENS
+   Direction: security-print / official-seal aesthetic
+   ============================================ */
+:root {
+  /* Color */
+  --ink-900: #080D18;
+  --ink-800: #0B1220;
+  --ink-700: #141B2E;
+  --ink-600: #1D2740;
+  --ink-500: #2A3654;
+  --paper: #EDEDE3;
+  --paper-dim: #B7B8AE;
+  --foil: #C9A227;
+  --foil-bright: #E8C158;
+  --verified: #3FAE6A;
+  --invalid: #D14343;
+
+  /* Type */
+  --font-display: 'Fraunces', serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  /* Layout */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --max-width: 1160px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--ink-800);
+  color: var(--paper);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Guilloché-inspired background texture used on hero/auth surfaces */
+.guilloche-bg {
+  background-color: var(--ink-800);
+  background-image:
+    repeating-linear-gradient(115deg, rgba(201, 162, 39, 0.045) 0px, rgba(201, 162, 39, 0.045) 1px, transparent 1px, transparent 14px),
+    repeating-linear-gradient(65deg, rgba(201, 162, 39, 0.035) 0px, rgba(201, 162, 39, 0.035) 1px, transparent 1px, transparent 18px);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input, select, textarea {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--foil);
+  color: var(--ink-900);
+}
+
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 32px;
+}
+
+@media (max-width: 640px) {
+  .container { padding: 0 20px; }
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--foil);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 28px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--foil-bright);
+  outline-offset: 3px;
+}
+
+.btn-primary {
+  background: var(--foil);
+  color: var(--ink-900);
+}
+.btn-primary:hover {
+  background: var(--foil-bright);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(201, 162, 39, 0.25);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--paper);
+  border: 1px solid var(--ink-500);
+}
+.btn-ghost:hover {
+  border-color: var(--foil);
+  color: var(--foil-bright);
+}
+
+.hash-chip {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--paper-dim);
+  background: var(--ink-700);
+  border: 1px solid var(--ink-500);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ============================================
+   PICTURE-RAIL GALLERY (credential wall)
+   shadcn-style tokens mapped to the AuthNode dark palette.
+   --rail-*   : "R G B" channels (Tailwind alpha support)
+   --color-*  : full colours (used inside color-mix() by the component)
+   ============================================ */
+:root {
+  --rail-background: 3 7 18;
+  --rail-foreground: 237 233 254;
+  --rail-card: 14 11 32;
+  --rail-card-foreground: 237 233 254;
+  --rail-muted: 20 16 42;
+  --rail-muted-foreground: 148 143 178;
+  --rail-border: 52 46 84;
+  --rail-ring: 167 139 250;
+  --rail-chart-2: 52 211 153;
+
+  --color-background: rgb(var(--rail-background));
+  --color-foreground: rgb(var(--rail-foreground));
+  --color-card: rgb(var(--rail-card));
+  --color-card-foreground: rgb(var(--rail-card-foreground));
+  --color-muted: rgb(var(--rail-muted));
+  --color-muted-foreground: rgb(var(--rail-muted-foreground));
+  --color-border: rgb(var(--rail-border));
+  --color-ring: rgb(var(--rail-ring));
+  --color-chart-2: rgb(var(--rail-chart-2));
+}
+
+/* Tailwind preflight is disabled project-wide, so give the gallery the few
+   resets it relies on (borders need a style; lists need no bullets). */
+[data-slot="picture-rail-gallery"] .border,
+[role="dialog"][aria-labelledby$="detail-title"] .border { border-style: solid; }
+[data-slot="picture-rail-gallery"] .border-t,
+[role="dialog"][aria-labelledby$="detail-title"] .border-t { border-top-style: solid; }
+[data-slot="picture-rail-gallery"] ul,
+[role="dialog"][aria-labelledby$="detail-title"] ul { list-style: none; }
+[data-slot="picture-rail-gallery"] button { font: inherit; }
